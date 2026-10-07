@@ -58,7 +58,7 @@ void adc_task(void *pvParameters){
         // Envia valor bruto para mapeamento
         app_model_set_adc_raw(adc_raw);
         // Entrega a tecla para a maquina de estados do menu.
-        //app_menu_process_key(key);
+        app_model_process_key(key);
         vTaskDelay(pdMS_TO_TICKS(20));
     }
     vTaskDelete(NULL);

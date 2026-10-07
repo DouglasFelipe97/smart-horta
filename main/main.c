@@ -6,6 +6,7 @@
 #include "io_task.h"
 #include "display_task.h"
 #include "app_pin_config.h"
+#include "rtc_task.h"
 
 // Mesma prioridade para as duas tasks, conforme solicitado.
 #define APP_ADC_TASK_PRIORITY     6
@@ -15,6 +16,8 @@
 #define DISPLAY_TASK_STACK    4096
 #define IO_TASK_STACK         3072
 #define ADC_TASK_STACK        2048
+#define RTC_READ_TASK_STACK   3072
+#define RTC_WRITE_TASK_STACK  3072
 
 static const char *TAG_MAIN = "APP_MAIN";
 
@@ -38,6 +41,12 @@ void app_main(void)
     // Configura GPIOs.
     // Os pinos reais estao em app_pin_config.h.
     app_config_pins();
+
+    // Inicializa barramento I2C para o modulo DS3231.
+    esp_err_t rtc_i2c_err = app_configure_rtc_i2c();
+    if (rtc_i2c_err != ESP_OK) {
+        ESP_LOGE(TAG_MAIN, "Falha ao configurar I2C do RTC: %s", esp_err_to_name(rtc_i2c_err));
+    }
 
     // // Configura PWM para o buzzer.
     // // Sem PWM o buzzer nao teria controle de intensidade (duty).
@@ -82,6 +91,33 @@ void app_main(void)
     );
     if (display_created != pdPASS) {
         ESP_LOGE(TAG_MAIN, "Falha ao criar display_task");
+    }
+
+    // Task de leitura do RTC: atualiza o horario no modelo a cada 1 segundo.
+    BaseType_t rtc_read_created = xTaskCreate(
+        rtc_read_task,
+        "rtc_read_task",
+        RTC_READ_TASK_STACK,
+        NULL,
+        APP_TASK_PRIORITY,
+        NULL
+    );
+    if (rtc_read_created != pdPASS) {
+        ESP_LOGE(TAG_MAIN, "Falha ao criar rtc_read_task");
+    }
+
+    // Task de escrita do RTC: roda em loop leve e escreve somente quando
+    // o menu de data/hora gera um pedido de atualizacao.
+    BaseType_t rtc_write_created = xTaskCreate(
+        rtc_write_task,
+        "rtc_write_task",
+        RTC_WRITE_TASK_STACK,
+        NULL,
+        APP_TASK_PRIORITY,
+        NULL
+    );
+    if (rtc_write_created != pdPASS) {
+        ESP_LOGE(TAG_MAIN, "Falha ao criar rtc_write_task");
     }
     
     ESP_LOGI(

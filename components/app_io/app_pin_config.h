@@ -4,6 +4,7 @@
 #include "driver/gpio.h"
 #include "driver/adc.h"
 #include "driver/ledc.h"
+#include "driver/i2c.h"
 #include "esp_err.h"
 
 // ------------------------------
@@ -34,6 +35,14 @@
 #define APP_LCD_PIN_DATA         GPIO_NUM_23
 #define APP_LCD_PIN_CLK          GPIO_NUM_18
 #define APP_LCD_PIN_RST          GPIO_NUM_22
+
+// ------------------------------
+// Configuracao do barramento I2C para RTC DS3231
+// ------------------------------
+#define APP_RTC_I2C_PORT         I2C_NUM_0
+#define APP_RTC_I2C_SDA_PIN      GPIO_NUM_21
+#define APP_RTC_I2C_SCL_PIN      GPIO_NUM_19
+#define APP_RTC_I2C_FREQ_HZ      100000
 
 // ------------------------------
 // Configuração de ADC
@@ -69,6 +78,9 @@ void app_configure_lcd_pins(void);
 
 // Inicializa ADC1 com canal configurado para leitura do teclado analogico.
 void app_configure_adc(void);
+
+// Inicializa barramento I2C usado pelo DS3231.
+esp_err_t app_configure_rtc_i2c(void);
 
 void app_config_pins(void);
 

@@ -25,16 +25,119 @@ static void draw_home(u8g2_t *u8g2, const app_state_snapshot_t *st)
     u8g2_DrawStr(u8g2, 2, 10, "TELA INICIAL");
     u8g2_DrawHLine(u8g2, 0, 12, 128);
 
-    // snprintf(line, sizeof(line), "Data: %02d/%02d/%04d", st->datetime.day, st->datetime.month, st->datetime.year);
-    // u8g2_DrawStr(u8g2, 0, 26, line);
+    snprintf(line, sizeof(line), "Data: %02u/%02u/%04u", st->datetime.day, st->datetime.month, st->datetime.year);
+    u8g2_DrawStr(u8g2, 2, 26, line);
 
-    // snprintf(line, sizeof(line), "Hora: %02d:%02d:%02d", st->datetime.hour, st->datetime.minute, st->datetime.second);
-    // u8g2_DrawStr(u8g2, 0, 38, line);
+    snprintf(line, sizeof(line), "Hora: %02u:%02u:%02u", st->datetime.hour, st->datetime.minute, st->datetime.second);
+    u8g2_DrawStr(u8g2, 2, 38, line);
 
     snprintf(line, sizeof(line), "AD raw: %4d", st->adc_raw);
     u8g2_DrawStr(u8g2, 2, 50, line);
 
     // u8g2_DrawStr(u8g2, 0, 63, "ENTER=Menu");
+}
+
+static void draw_main_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
+{
+    static const char *items[] = {"Ajustes", "Relatorios", "Sobre"};
+    char line[24];
+
+    u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
+    u8g2_DrawStr(u8g2, 2, 10, "MENU");
+    u8g2_DrawHLine(u8g2, 0, 12, 128);
+
+    for (int i = 0; i < 3; i++) {
+        snprintf(line, sizeof(line), "%c %s", (st->menu_index == (uint8_t)i) ? '>' : ' ', items[i]);
+        u8g2_DrawStr(u8g2, 2, 26 + (i * 12), line);
+    }
+}
+
+static void draw_placeholder_screen(u8g2_t *u8g2, const char *title)
+{
+    u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
+    u8g2_DrawStr(u8g2, 2, 10, title);
+    u8g2_DrawHLine(u8g2, 0, 12, 128);
+    u8g2_DrawStr(u8g2, 2, 34, "Em desenvolvimento");
+    u8g2_DrawStr(u8g2, 2, 50, "BACK = voltar");
+}
+
+static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
+{
+    static const char *items[] = {"Data", "Temperaturas", "Umidade", "Instalar sensores"};
+    static const char *temp_items[] = {"Curvas", "Offset"};
+    char line[32];
+
+    u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
+    u8g2_DrawStr(u8g2, 2, 10, "AJUSTES");
+    u8g2_DrawHLine(u8g2, 0, 12, 128);
+
+    if (st->settings_editing_datetime) {
+        const char *field_name = "Campo";
+        switch (st->datetime_field_index) {
+            case 0:
+                field_name = "Dia";
+                break;
+            case 1:
+                field_name = "Mes";
+                break;
+            case 2:
+                field_name = "Ano";
+                break;
+            case 3:
+                field_name = "Hora";
+                break;
+            case 4:
+                field_name = "Min";
+                break;
+            case 5:
+                field_name = "Seg";
+                break;
+            default:
+                break;
+        }
+
+        u8g2_DrawStr(u8g2, 2, 22, "> Data");
+        snprintf(line, sizeof(line), "%02u/%02u/%04u", st->datetime.day, st->datetime.month, st->datetime.year);
+        u8g2_DrawStr(u8g2, 2, 34, line);
+        snprintf(line, sizeof(line), "%02u:%02u:%02u", st->datetime.hour, st->datetime.minute, st->datetime.second);
+        u8g2_DrawStr(u8g2, 2, 46, line);
+        snprintf(line, sizeof(line), "Campo: %s", field_name);
+        u8g2_DrawStr(u8g2, 2, 58, line);
+    } else if (st->settings_temperature_mode == 1) {
+        u8g2_DrawStr(u8g2, 2, 22, "> Temperaturas");
+        for (int i = 0; i < 2; i++) {
+            snprintf(line, sizeof(line), "%c %s", (st->temperature_index == (uint8_t)i) ? '>' : ' ', temp_items[i]);
+            u8g2_DrawStr(u8g2, 2, 36 + (i * 12), line);
+        }
+    } else if (st->settings_temperature_mode == 2) {
+        u8g2_DrawStr(u8g2, 2, 22, "> Temperaturas");
+        u8g2_DrawStr(u8g2, 2, 34, "Curvas");
+        u8g2_DrawStr(u8g2, 2, 46, "Em desenvolvimento");
+        u8g2_DrawStr(u8g2, 2, 58, "BACK = voltar");
+    } else if (st->settings_temperature_mode == 3) {
+        u8g2_DrawStr(u8g2, 2, 22, "> Temperaturas");
+        u8g2_DrawStr(u8g2, 2, 34, "Offset");
+        u8g2_DrawStr(u8g2, 2, 46, "Em desenvolvimento");
+        u8g2_DrawStr(u8g2, 2, 58, "BACK = voltar");
+    } else {
+        for (int i = 0; i < 4; i++) {
+            snprintf(line, sizeof(line), "%c %s", (st->settings_index == (uint8_t)i) ? '>' : ' ', items[i]);
+            u8g2_DrawStr(u8g2, 2, 22 + (i * 10), line);
+        }
+    }
+}
+
+static void draw_about_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
+{
+    (void)st;
+
+    u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
+    u8g2_DrawStr(u8g2, 2, 10, "SOBRE");
+    u8g2_DrawHLine(u8g2, 0, 12, 128);
+
+    u8g2_DrawStr(u8g2, 2, 30, "SMART-Horta");
+    u8g2_DrawStr(u8g2, 2, 46, "Versao: V0.0.1");
+    u8g2_DrawStr(u8g2, 2, 60, "BACK = voltar");
 }
 
 static void draw_screen(u8g2_t *u8g2, const app_state_snapshot_t *st)
@@ -44,18 +147,18 @@ static void draw_screen(u8g2_t *u8g2, const app_state_snapshot_t *st)
         case APP_SCREEN_HOME:
             draw_home(u8g2, st);
             break;
-        // case APP_SCREEN_MENU:
-        //     draw_menu(u8g2, st);
-        //     break;
-        // case APP_SCREEN_MENU_BUZZER:
-        //     draw_buzzer_menu(u8g2, st);
-        //     break;
-        // case APP_SCREEN_MENU_LED_TIME:
-        //     draw_led_time_menu(u8g2, st);
-        //     break;
-        // case APP_SCREEN_MENU_DATE_TIME:
-        //     draw_datetime_menu(u8g2, st);
-        //     break;
+        case APP_SCREEN_MENU:
+            draw_main_menu(u8g2, st);
+            break;
+        case APP_SCREEN_MENU_SETTINGS:
+            draw_settings_menu(u8g2, st);
+            break;
+        case APP_SCREEN_MENU_REPORTS:
+            draw_placeholder_screen(u8g2, "RELATORIOS");
+            break;
+        case APP_SCREEN_MENU_ABOUT:
+            draw_about_menu(u8g2, st);
+            break;
         default:
             draw_home(u8g2, st);
             break;

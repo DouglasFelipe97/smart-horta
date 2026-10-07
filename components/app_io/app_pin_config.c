@@ -76,6 +76,28 @@ void app_configure_adc(void){
     adc1_config_channel_atten(APP_ADC_KEYBOARD_CHANNEL, APP_ADC_ATTEN);
 }
 
+esp_err_t app_configure_rtc_i2c(void)
+{
+    i2c_config_t conf = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = APP_RTC_I2C_SDA_PIN,
+        .scl_io_num = APP_RTC_I2C_SCL_PIN,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = APP_RTC_I2C_FREQ_HZ,
+        .clk_flags = 0,
+    };
+
+    esp_err_t err = i2c_param_config(APP_RTC_I2C_PORT, &conf);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    // Se o driver ja estiver instalado, reinstalamos para manter idempotente.
+    i2c_driver_delete(APP_RTC_I2C_PORT);
+    return i2c_driver_install(APP_RTC_I2C_PORT, conf.mode, 0, 0, 0);
+}
+
 void app_config_pins(void){
     app_configure_gpio_outputs();
     app_configure_gpio_inputs();
