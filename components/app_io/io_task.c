@@ -56,6 +56,7 @@ void adc_task(void *pvParameters){
         //    - Leitura do teclado analogico.
         //    - Guarda o valor bruto para visualizacao no display (mapeamento).
         //    - Dispara evento de tecla para a maquina de estados.
+        uint32_t now_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
         int adc_raw = 0;
         app_key_t key = keyboard_adc_poll_event(&adc_raw);
         // Envia valor bruto para mapeamento
@@ -67,6 +68,10 @@ void adc_task(void *pvParameters){
 
         // Entrega a tecla para a maquina de estados do menu.
         app_model_process_key(key);
+
+        // Retorna para HOME se ficar sem interacao por mais de 30 segundos.
+        app_model_check_inactivity_timeout(now_ms);
+
         vTaskDelay(pdMS_TO_TICKS(20));
     }
     vTaskDelete(NULL);

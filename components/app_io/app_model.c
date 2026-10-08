@@ -21,6 +21,7 @@ typedef struct {
     app_datetime_t datetime;
     app_datetime_t edit_datetime;
     bool rtc_write_pending;
+    uint32_t last_user_interaction_ms;
 } app_model_data_t;
 
 static app_model_data_t s_model;            //Criando uma estrutura nova
@@ -40,6 +41,8 @@ static SemaphoreHandle_t s_model_mutex;     //Criando semaforo para usar o mutex
 #define APP_BUZZER_MODE_NONE     0
 #define APP_BUZZER_MODE_MENU     1
 
+#define APP_INACTIVITY_TIMEOUT_MS 30000U
+
 static void lock_model(void){       //com o semaforo/mutex bloquio a estrutura de dados utilizados para a comunicação entre as tasks, protegendo os dados enquanto uma tarefa usa
     // Bloqueia ate o mutex ficar disponivel.
     xSemaphoreTake(s_model_mutex, portMAX_DELAY);
@@ -48,6 +51,13 @@ static void lock_model(void){       //com o semaforo/mutex bloquio a estrutura d
 static void unlock_model(void){
     // Libera mutex para outra task acessar o estado.
     xSemaphoreGive(s_model_mutex);
+}
+
+static void reset_settings_submenus(void)
+{
+    s_model.settings_editing_datetime = false;
+    s_model.settings_temperature_mode = APP_TEMPERATURE_MODE_NONE;
+    s_model.settings_buzzer_mode = APP_BUZZER_MODE_NONE;
 }
 
 static bool is_leap_year(uint16_t year)
@@ -226,6 +236,7 @@ void app_model_init(void)
     s_model.datetime.minute = 0;
     s_model.datetime.second = 0;
     s_model.edit_datetime = s_model.datetime;
+    s_model.last_user_interaction_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
 
     s_model_mutex = xSemaphoreCreateMutex();
 }
@@ -314,6 +325,7 @@ void app_model_process_key(app_key_t key)
     }
 
     lock_model();
+    s_model.last_user_interaction_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
 
     switch (s_model.screen) {
         case APP_SCREEN_HOME:
@@ -391,9 +403,7 @@ void app_model_process_key(app_key_t key)
                     s_model.settings_index = (s_model.settings_index + 1U) % APP_SETTINGS_MENU_ITEMS;
                 } else if (key == APP_KEY_BACK) {
                     s_model.screen = APP_SCREEN_MENU;
-                    s_model.settings_editing_datetime = false;
-                    s_model.settings_temperature_mode = APP_TEMPERATURE_MODE_NONE;
-                    s_model.settings_buzzer_mode = APP_BUZZER_MODE_NONE;
+                    reset_settings_submenus();
                 } else if (key == APP_KEY_ENTER) {
                     // Somente item "Data" entra em modo de edicao.
                     if (s_model.settings_index == 0U) {
@@ -456,4 +466,18 @@ bool app_model_is_key_beep_enabled(void)
     unlock_model();
 
     return enabled;
+}
+
+void app_model_check_inactivity_timeout(uint32_t now_ms)
+{
+    lock_model();
+
+    // Se estiver fora da HOME e passar 30s sem tecla estavel, retorna para inicio.
+    if (s_model.screen != APP_SCREEN_HOME &&
+        (uint32_t)(now_ms - s_model.last_user_interaction_ms) >= APP_INACTIVITY_TIMEOUT_MS) {
+        s_model.screen = APP_SCREEN_HOME;
+        reset_settings_submenus();
+    }
+
+    unlock_model();
 }

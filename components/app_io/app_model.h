@@ -76,4 +76,7 @@ bool app_model_take_key_press_flag(void);
 // Consulta do estado de habilitacao do beep de teclas.
 bool app_model_is_key_beep_enabled(void);
 
+// Verifica timeout de inatividade e retorna para HOME quando necessario.
+void app_model_check_inactivity_timeout(uint32_t now_ms);
+
 #endif
