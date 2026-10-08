@@ -23,6 +23,8 @@ typedef enum {
     APP_KEY_DOWN,
     APP_KEY_ENTER,
     APP_KEY_BACK,
+    APP_KEY_LEFT,
+    APP_KEY_MENU,
 } app_key_t;
 
 // Data/hora usada no app e no modulo RTC DS3231.

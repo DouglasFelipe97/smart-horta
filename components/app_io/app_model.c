@@ -302,7 +302,7 @@ void app_model_process_key(app_key_t key)
 
     switch (s_model.screen) {
         case APP_SCREEN_HOME:
-            if (key == APP_KEY_ENTER) {
+            if (key == APP_KEY_MENU) {
                 s_model.screen = APP_SCREEN_MENU;
                 s_model.menu_index = 0;
             }
