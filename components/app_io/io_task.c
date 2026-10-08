@@ -15,13 +15,10 @@ static const char *TAG_IO = "IO_TASK";
 
 void io_task(void *pvParameters){
     bool led_state = false;
-    bool buzzer_state = false;
 
     // Marcadores de tempo (em ms) para tarefas periodicas.
     uint32_t last_led_toggle_ms = 0;
     uint32_t last_buzzer_toggle_ms = 0;
-    uint32_t last_log_ms = 0;
-    uint32_t last_second_ms = 0;
 
     while (1) {
         // Tempo atual em milissegundos baseado no tick do FreeRTOS.
@@ -34,14 +31,20 @@ void io_task(void *pvParameters){
             gpio_set_level(APP_LED_1_PIN, led_state ? 1 : 0);
             gpio_set_level(APP_LED_2_PIN, led_state ? 0 : 1);
         }
-        /*Button buzzer*/
-        // if(keyboard_adc_poll_event(NULL))     /*Se uma tecla for pressionada //keyboard_adc_poll_event(NULL) GERA CONCORRENCIA*/
-        //     /*FAZER FUNÇÃO*/
-        //     if(/*app_buzzer_function() &&*/ now_ms - last_buzzer_toggle_ms >= 100){     /*Se o buzzer teclas estiver hab e se o periodo desde a ultima mudança de estado for maior que o valor de periodo do buzzer */
-        //         last_buzzer_toggle_ms = now_ms;
-        //         buzzer_state = !buzzer_state;
-        //         gpio_set_level(APP_BUZZER_PIN, buzzer_state ? 1 : 0);
-        //     }
+        // Beep unico por tecla estavel:
+        // - adc_task marca um flag quando uma tecla valida e reconhecida.
+        // - aqui consumimos o flag apenas uma vez e, se habilitado no menu,
+        //   geramos um pulso curto no buzzer.
+        if (app_model_take_key_press_flag()) {
+            if (app_model_is_key_beep_enabled() && (now_ms - last_buzzer_toggle_ms >= 100U)) {
+                last_buzzer_toggle_ms = now_ms;
+
+                gpio_set_level(APP_BUZZER_PIN, 1);
+                vTaskDelay(pdMS_TO_TICKS(20));
+                gpio_set_level(APP_BUZZER_PIN, 0);
+            }
+        }
+
         vTaskDelay(pdMS_TO_TICKS(50));
     }
     vTaskDelete(NULL);
@@ -57,6 +60,11 @@ void adc_task(void *pvParameters){
         app_key_t key = keyboard_adc_poll_event(&adc_raw);
         // Envia valor bruto para mapeamento
         app_model_set_adc_raw(adc_raw);
+
+        if (key != APP_KEY_NONE) {
+            app_model_set_key_press_flag();
+        }
+
         // Entrega a tecla para a maquina de estados do menu.
         app_model_process_key(key);
         vTaskDelay(pdMS_TO_TICKS(20));

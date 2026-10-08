@@ -63,8 +63,9 @@ static void draw_placeholder_screen(u8g2_t *u8g2, const char *title)
 
 static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
 {
-    static const char *items[] = {"Data", "Temperaturas", "Umidade", "Instalar sensores"};
+    static const char *items[] = {"Data", "Temperaturas", "Buzzer", "Umidade", "Instalar sensores"};
     static const char *temp_items[] = {"Curvas", "Offset"};
+    static const char *buzzer_items[] = {"Habilitar", "Desabilitar"};
     char line[32];
 
     u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
@@ -119,8 +120,16 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
         u8g2_DrawStr(u8g2, 2, 34, "Offset");
         u8g2_DrawStr(u8g2, 2, 46, "Em desenvolvimento");
         u8g2_DrawStr(u8g2, 2, 58, "BACK = voltar");
+    } else if (st->settings_buzzer_mode == 1) {
+        u8g2_DrawStr(u8g2, 2, 22, "> Buzzer");
+        for (int i = 0; i < 2; i++) {
+            snprintf(line, sizeof(line), "%c %s", (st->buzzer_index == (uint8_t)i) ? '>' : ' ', buzzer_items[i]);
+            u8g2_DrawStr(u8g2, 2, 36 + (i * 12), line);
+        }
+        snprintf(line, sizeof(line), "Atual: %s", st->key_beep_enabled ? "ON" : "OFF");
+        u8g2_DrawStr(u8g2, 2, 60, line);
     } else {
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < 5; i++) {
             snprintf(line, sizeof(line), "%c %s", (st->settings_index == (uint8_t)i) ? '>' : ' ', items[i]);
             u8g2_DrawStr(u8g2, 2, 22 + (i * 10), line);
         }

@@ -47,6 +47,9 @@ typedef struct {
     bool settings_editing_datetime;
     uint8_t settings_temperature_mode;
     uint8_t temperature_index;
+    uint8_t settings_buzzer_mode;
+    uint8_t buzzer_index;
+    bool key_beep_enabled;
     uint8_t datetime_field_index;
     app_datetime_t datetime;
 } app_state_snapshot_t;
@@ -63,5 +66,14 @@ void app_model_set_datetime(const app_datetime_t *dt);
 
 // Entrega uma solicitacao pendente de escrita no RTC e limpa o flag.
 bool app_model_take_rtc_write_request(app_datetime_t *dt);
+
+// Marca evento de tecla estavel para disparo de beep de navegacao.
+void app_model_set_key_press_flag(void);
+
+// Consome o evento pendente de tecla (retorna true apenas uma vez por tecla).
+bool app_model_take_key_press_flag(void);
+
+// Consulta do estado de habilitacao do beep de teclas.
+bool app_model_is_key_beep_enabled(void);
 
 #endif

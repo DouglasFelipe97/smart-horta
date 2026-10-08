@@ -11,6 +11,10 @@ typedef struct {
     bool settings_editing_datetime;
     uint8_t settings_temperature_mode;
     uint8_t temperature_index;
+    uint8_t settings_buzzer_mode;
+    uint8_t buzzer_index;
+    bool key_beep_enabled;
+    bool key_press_pending;
     uint8_t datetime_field_index;
     app_screen_t screen;
     int adc_raw;
@@ -23,14 +27,18 @@ static app_model_data_t s_model;            //Criando uma estrutura nova
 static SemaphoreHandle_t s_model_mutex;     //Criando semaforo para usar o mutex
 
 #define APP_MAIN_MENU_ITEMS      3
-#define APP_SETTINGS_MENU_ITEMS  4
+#define APP_SETTINGS_MENU_ITEMS  5
 #define APP_TEMPERATURE_MENU_ITEMS 2
+#define APP_BUZZER_MENU_ITEMS    2
 #define APP_DATE_FIELDS          6
 
 #define APP_TEMPERATURE_MODE_NONE    0
 #define APP_TEMPERATURE_MODE_MENU    1
 #define APP_TEMPERATURE_MODE_CURVES  2
 #define APP_TEMPERATURE_MODE_OFFSET  3
+
+#define APP_BUZZER_MODE_NONE     0
+#define APP_BUZZER_MODE_MENU     1
 
 static void lock_model(void){       //com o semaforo/mutex bloquio a estrutura de dados utilizados para a comunicação entre as tasks, protegendo os dados enquanto uma tarefa usa
     // Bloqueia ate o mutex ficar disponivel.
@@ -204,6 +212,10 @@ void app_model_init(void)
     s_model.settings_editing_datetime = false;
     s_model.settings_temperature_mode = APP_TEMPERATURE_MODE_NONE;
     s_model.temperature_index = 0;
+    s_model.settings_buzzer_mode = APP_BUZZER_MODE_NONE;
+    s_model.buzzer_index = 0;
+    s_model.key_beep_enabled = true;
+    s_model.key_press_pending = false;
     s_model.datetime_field_index = 0;
 
     // Valor inicial seguro ate a primeira leitura do DS3231.
@@ -282,6 +294,9 @@ void app_model_get_snapshot(app_state_snapshot_t *snapshot)
     snapshot->settings_editing_datetime = s_model.settings_editing_datetime;
     snapshot->settings_temperature_mode = s_model.settings_temperature_mode;
     snapshot->temperature_index = s_model.temperature_index;
+    snapshot->settings_buzzer_mode = s_model.settings_buzzer_mode;
+    snapshot->buzzer_index = s_model.buzzer_index;
+    snapshot->key_beep_enabled = s_model.key_beep_enabled;
     snapshot->datetime_field_index = s_model.datetime_field_index;
 
     if (s_model.settings_editing_datetime) {
@@ -359,6 +374,16 @@ void app_model_process_key(app_key_t key)
                 if (key == APP_KEY_BACK) {
                     s_model.settings_temperature_mode = APP_TEMPERATURE_MODE_MENU;
                 }
+            } else if (s_model.settings_buzzer_mode == APP_BUZZER_MODE_MENU) {
+                if (key == APP_KEY_UP) {
+                    s_model.buzzer_index = (s_model.buzzer_index + APP_BUZZER_MENU_ITEMS - 1U) % APP_BUZZER_MENU_ITEMS;
+                } else if (key == APP_KEY_DOWN) {
+                    s_model.buzzer_index = (s_model.buzzer_index + 1U) % APP_BUZZER_MENU_ITEMS;
+                } else if (key == APP_KEY_ENTER) {
+                    s_model.key_beep_enabled = (s_model.buzzer_index == 0U);
+                } else if (key == APP_KEY_BACK) {
+                    s_model.settings_buzzer_mode = APP_BUZZER_MODE_NONE;
+                }
             } else {
                 if (key == APP_KEY_UP) {
                     s_model.settings_index = (s_model.settings_index + APP_SETTINGS_MENU_ITEMS - 1U) % APP_SETTINGS_MENU_ITEMS;
@@ -368,6 +393,7 @@ void app_model_process_key(app_key_t key)
                     s_model.screen = APP_SCREEN_MENU;
                     s_model.settings_editing_datetime = false;
                     s_model.settings_temperature_mode = APP_TEMPERATURE_MODE_NONE;
+                    s_model.settings_buzzer_mode = APP_BUZZER_MODE_NONE;
                 } else if (key == APP_KEY_ENTER) {
                     // Somente item "Data" entra em modo de edicao.
                     if (s_model.settings_index == 0U) {
@@ -377,6 +403,9 @@ void app_model_process_key(app_key_t key)
                     } else if (s_model.settings_index == 1U) {
                         s_model.settings_temperature_mode = APP_TEMPERATURE_MODE_MENU;
                         s_model.temperature_index = 0;
+                    } else if (s_model.settings_index == 2U) {
+                        s_model.settings_buzzer_mode = APP_BUZZER_MODE_MENU;
+                        s_model.buzzer_index = s_model.key_beep_enabled ? 0U : 1U;
                     }
                 }
             }
@@ -395,4 +424,36 @@ void app_model_process_key(app_key_t key)
     }
 
     unlock_model();
+}
+
+void app_model_set_key_press_flag(void)
+{
+    lock_model();
+    s_model.key_press_pending = true;
+    unlock_model();
+}
+
+bool app_model_take_key_press_flag(void)
+{
+    bool has_key_press = false;
+
+    lock_model();
+    if (s_model.key_press_pending) {
+        has_key_press = true;
+        s_model.key_press_pending = false;
+    }
+    unlock_model();
+
+    return has_key_press;
+}
+
+bool app_model_is_key_beep_enabled(void)
+{
+    bool enabled;
+
+    lock_model();
+    enabled = s_model.key_beep_enabled;
+    unlock_model();
+
+    return enabled;
 }
