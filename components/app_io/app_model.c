@@ -79,6 +79,10 @@ static void reset_settings_submenus(void)
 
 static void reset_probe_install_data_unlocked(void)
 {
+    // Zera estado operacional das tres telas de sondas:
+    // - Instalacao (status e contador)
+    // - Desinstalacao (status e ciclo)
+    // - Telemetria (placeholders via probes[])
     s_model.probe_install_running = false;
     s_model.probe_install_finished = false;
     s_model.probe_install_completed_count = 0;
@@ -455,12 +459,15 @@ void app_model_process_key(app_key_t key)
                     s_model.probe_menu_index = (s_model.probe_menu_index + 1U) % APP_PROBE_MENU_ITEMS;
                 } else if (key == APP_KEY_ENTER) {
                     if (s_model.probe_menu_index == 0U) {
+                        // Entrar em "Instalar" sempre parte de estado limpo.
                         reset_probe_install_data_unlocked();
                         s_model.settings_probe_mode = APP_PROBE_MODE_INSTALL;
                     } else if (s_model.probe_menu_index == 1U) {
+                        // Entrar em "Desinstalar" tambem limpa status antigo.
                         reset_probe_install_data_unlocked();
                         s_model.settings_probe_mode = APP_PROBE_MODE_UNINSTALL;
                     } else {
+                        // Tela "Sondas" usa ultimo ciclo de monitoramento.
                         s_model.settings_probe_mode = APP_PROBE_MODE_LIST;
                     }
                 } else if (key == APP_KEY_BACK) {
@@ -554,6 +561,8 @@ bool app_model_is_probe_install_screen_active(void)
     bool active;
 
     lock_model();
+    // Essa consulta e usada para ativar/desativar o manager de instalacao
+    // sem acoplamento com o desenho da UI.
     active = (s_model.screen == APP_SCREEN_MENU_SETTINGS) &&
              (s_model.settings_probe_mode == APP_PROBE_MODE_INSTALL);
     unlock_model();
@@ -566,6 +575,7 @@ bool app_model_is_probe_uninstall_screen_active(void)
     bool active;
 
     lock_model();
+    // Ativa apenas dentro da tela Desinstalar.
     active = (s_model.screen == APP_SCREEN_MENU_SETTINGS) &&
              (s_model.settings_probe_mode == APP_PROBE_MODE_UNINSTALL);
     unlock_model();
@@ -578,6 +588,7 @@ bool app_model_is_probe_list_screen_active(void)
     bool active;
 
     lock_model();
+    // Ativa polling somente quando a tela Sondas esta aberta.
     active = (s_model.screen == APP_SCREEN_MENU_SETTINGS) &&
              (s_model.settings_probe_mode == APP_PROBE_MODE_LIST);
     unlock_model();
@@ -617,6 +628,7 @@ void app_model_set_probe_snapshot(uint8_t probe_slot,
     }
 
     lock_model();
+    // slot 0..3 mapeia para Sensor 1..4 na UI.
     s_model.probes[probe_slot].installed = installed;
     s_model.probes[probe_slot].has_reading = has_reading;
     s_model.probes[probe_slot].temperature = temperature;
@@ -635,6 +647,7 @@ void app_model_reset_probe_install_data(void)
 void app_model_exit_probe_uninstall_to_menu(void)
 {
     lock_model();
+    // Usado pela rotina de desinstalacao apos delay visual de conclusao.
     if (s_model.screen == APP_SCREEN_MENU_SETTINGS &&
         s_model.settings_probe_mode == APP_PROBE_MODE_UNINSTALL) {
         s_model.settings_probe_mode = APP_PROBE_MODE_MENU;

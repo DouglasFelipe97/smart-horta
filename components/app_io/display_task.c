@@ -186,6 +186,8 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
         u8g2_DrawStr(u8g2, 2, 60, "Desinstalando...");
     } else if (st->settings_probe_mode == 4) {
         // Tela "Sondas": leitura ciclica em tempo real por sensor.
+        // A task de monitoramento UART atualiza st->probes[] em background.
+        // Esta tela apenas consome snapshot pronto e renderiza.
         char t_str[8];
         char u_str[8];
         char s_str[8];
@@ -196,10 +198,13 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
         u8g2_SetFont(u8g2, u8g2_font_4x6_tr);
         for (int i = 0; i < APP_PROBE_COUNT; i++) {
             if (st->probes[i].installed && st->probes[i].has_reading) {
+                // Sensor ativo com leitura valida no ultimo ciclo de polling.
                 snprintf(t_str, sizeof(t_str), "%4.1f", st->probes[i].temperature);
                 snprintf(u_str, sizeof(u_str), "%4.1f", st->probes[i].air_humidity);
                 snprintf(s_str, sizeof(s_str), "%4.1f", st->probes[i].soil_humidity);
             } else {
+                // Sensor ausente/sem resposta: mantemos mascara fixa para
+                // facilitar leitura visual da grade sem "pular" alinhamento.
                 snprintf(t_str, sizeof(t_str), "__._");
                 snprintf(u_str, sizeof(u_str), "__._");
                 snprintf(s_str, sizeof(s_str), "__._");

@@ -7,6 +7,14 @@
 #include "esp_log.h"
 #include "app_model.h"
 
+// -----------------------------------------------------------------------------
+// Configuracao UART e protocolo de sondas
+// -----------------------------------------------------------------------------
+// O mesmo frame base e reutilizado para tres operacoes:
+// 1) Instalacao por descoberta/atribuicao de ID
+// 2) Desinstalacao (forcando ID = 0xFF)
+// 3) Polling ciclico de telemetria (T/U/S)
+// -----------------------------------------------------------------------------
 #define PROBE_UART_PORT            UART_NUM_1
 #define PROBE_UART_BAUDRATE        9600
 #define PROBE_UART_TX_PIN          GPIO_NUM_17
@@ -37,6 +45,9 @@
 
 static const char *TAG = "PROBE_INSTALL";
 
+// Frame fixo de 9 bytes:
+// [0] 0x55 | [1] versao | [2] len payload | [3] registrador
+// [4] id/alvo | [5] reservado | [6..7] CRC16 | [8] 0x55
 typedef struct __attribute__((packed)) {
     uint8_t start;
     uint8_t version;
@@ -64,6 +75,8 @@ typedef struct {
     uint32_t last_tx_ms;
 } probe_install_state_t;
 
+// Estado da rotina de desinstalacao redundante:
+// percorre 1..4 por ciclo e repete 3 ciclos para aumentar confiabilidade.
 typedef struct {
     bool active;
     bool finished;
@@ -73,6 +86,8 @@ typedef struct {
     uint32_t finished_ms;
 } probe_uninstall_state_t;
 
+// Estrutura de buffer local para monitoramento da tela "Sondas".
+// O campo "installed" define se a UI deve exibir valores reais ou mascara.
 typedef struct {
     float temp;
     float hum;
@@ -101,6 +116,7 @@ static probe_uninstall_state_t s_uninstall_state;
 static probe_monitor_state_t s_probe_monitor;
 static bool s_uart_initialized = false;
 
+// CRC16 Modbus para proteger frame contra ruido no barramento.
 static uint16_t crc16_modbus(const uint8_t *data, size_t len)
 {
     uint16_t crc = 0xFFFFU;
@@ -119,6 +135,7 @@ static uint16_t crc16_modbus(const uint8_t *data, size_t len)
     return crc;
 }
 
+// Monta frame generico para qualquer comando (instalar, desinstalar, leitura).
 static size_t build_probe_frame(uint8_t reg, uint8_t id, uint8_t reserved,
                                 uint8_t *out_buf, size_t out_buf_len)
 {
@@ -171,6 +188,8 @@ static void select_probe_target_address(uint8_t target_id)
     (void)target_id;
 }
 
+// Valida delimitadores, tamanho, CRC e extrai registrador/ID/payload.
+// A validacao de "semantica" do comando esperado fica para a FSM chamadora.
 static bool parse_probe_frame(const uint8_t *frame,
                               size_t frame_len,
                               uint8_t *out_reg,
@@ -222,6 +241,10 @@ static bool parse_probe_frame(const uint8_t *frame,
     return true;
 }
 
+// Leitura nao bloqueante do RX:
+// - coleta bytes disponiveis no instante atual
+// - tenta localizar um frame valido dentro do buffer
+// - recorta para o frame encontrado (memmove)
 static bool uart_read_probe_frame(uint8_t *buf, size_t buf_size, size_t *out_len)
 {
     if (buf == NULL || out_len == NULL || buf_size < PROBE_FRAME_TX_SIZE) {
@@ -280,6 +303,7 @@ void send_probe_assignment(uint8_t id)
     uart_write_bytes(PROBE_UART_PORT, (const char *)tx_frame, tx_len);
 }
 
+// Envia frame de desinstalacao para o alvo corrente, gravando ID 0xFF.
 static void send_probe_uninstall(uint8_t target_id)
 {
     uint8_t tx_frame[PROBE_FRAME_TX_SIZE] = {0};
@@ -293,6 +317,7 @@ static void send_probe_uninstall(uint8_t target_id)
     uart_write_bytes(PROBE_UART_PORT, (const char *)tx_frame, tx_len);
 }
 
+// Requisita telemetria de um ID especifico (registrador de leitura).
 static void send_probe_read_request(uint8_t id)
 {
     uint8_t tx_frame[PROBE_FRAME_TX_SIZE] = {0};
@@ -338,6 +363,7 @@ bool process_probe_response(const uint8_t *payload,
 
 void probe_install_manager_init(void)
 {
+    // Limpa todos os contextos de estado para evitar lixo de boot/reset.
     memset(&s_probe_state, 0, sizeof(s_probe_state));
     memset(&s_uninstall_state, 0, sizeof(s_uninstall_state));
     memset(&s_probe_monitor, 0, sizeof(s_probe_monitor));
@@ -366,13 +392,14 @@ void probe_monitor_manager_set_active(bool active)
     }
 
     if (active && !s_probe_monitor.active) {
+        // Entrou na tela "Sondas": inicia varredura no sensor 1.
         s_probe_monitor.active = true;
         s_probe_monitor.stage = PROBE_MONITOR_SEND;
         s_probe_monitor.current_id = 1;
         s_probe_monitor.stage_started_ms = 0;
         s_probe_monitor.scan_completed_ms = 0;
 
-        // Tela Sondas inicia com mascara para todos os canais.
+        // Tela Sondas inicia com mascara para todos os canais ate receber respostas.
         for (int i = 0; i < APP_PROBE_COUNT; i++) {
             s_probe_monitor.data[i].installed = false;
             s_probe_monitor.data[i].temp = 0.0f;
@@ -381,6 +408,7 @@ void probe_monitor_manager_set_active(bool active)
             app_model_set_probe_snapshot((uint8_t)i, false, false, 0.0f, 0.0f, 0.0f);
         }
     } else if (!active && s_probe_monitor.active) {
+        // Saiu da tela "Sondas": pausa polling para liberar barramento UART.
         s_probe_monitor.active = false;
         s_probe_monitor.stage = PROBE_MONITOR_IDLE;
     }
@@ -393,7 +421,7 @@ void probe_install_manager_set_active(bool active)
     }
 
     if (active && !s_probe_state.active) {
-        // Entrada na tela Instalar: inicia processo automatico do ID 1.
+        // Entrada na tela Instalar: inicia processo automatico de descoberta.
         s_probe_state.active = true;
         s_probe_state.stage = PROBE_STAGE_DISCOVERY;
         s_probe_state.current_id = 1;
@@ -404,6 +432,7 @@ void probe_install_manager_set_active(bool active)
         app_model_reset_probe_install_data();
         app_model_set_probe_install_status(true, false, 0);
     } else if (!active && s_probe_state.active) {
+        // Ao sair da tela, apenas pausamos; nao forcamos rollback de IDs ja gravados.
         s_probe_state.active = false;
         s_probe_state.stage = PROBE_STAGE_IDLE;
         app_model_set_probe_install_status(false, false, s_probe_state.completed_count);
@@ -417,6 +446,7 @@ void probe_uninstall_manager_set_active(bool active)
     }
 
     if (active && !s_uninstall_state.active) {
+        // Entrada na tela Desinstalar: inicia imediatamente no ciclo 1, alvo ID 1.
         s_uninstall_state.active = true;
         s_uninstall_state.finished = false;
         s_uninstall_state.cycle_index = 0;
@@ -425,6 +455,7 @@ void probe_uninstall_manager_set_active(bool active)
         s_uninstall_state.finished_ms = 0;
         app_model_set_probe_uninstall_status(true, false, 1U);
     } else if (!active && s_uninstall_state.active) {
+        // Saida da tela: interrompe rotina e preserva somente status para UI.
         s_uninstall_state.active = false;
         s_uninstall_state.finished = false;
         app_model_set_probe_uninstall_status(false, false, s_uninstall_state.cycle_index);
@@ -450,6 +481,7 @@ void probe_install_manager_periodic(uint32_t now_ms)
     }
 
     if (s_probe_state.stage == PROBE_STAGE_DISCOVERY) {
+        // Fase 1: broadcast ciclico ate alguma sonda responder.
         if ((now_ms - s_probe_state.last_tx_ms) >= PROBE_DISCOVERY_PERIOD_MS) {
             send_probe_discovery();
             s_probe_state.last_tx_ms = now_ms;
@@ -459,7 +491,7 @@ void probe_install_manager_periodic(uint32_t now_ms)
             if (rx_reg != PROBE_INSTALL_REGISTER) {
                 return;
             }
-            // Encontrou sonda no barramento: envia atribuicao para ID atual.
+            // Fase 2: recebeu resposta, entao atribui ID sequencial atual (1..4).
             send_probe_assignment(s_probe_state.current_id);
             s_probe_state.last_tx_ms = now_ms;
             s_probe_state.assign_retry_count = 0;
@@ -484,6 +516,7 @@ void probe_install_manager_periodic(uint32_t now_ms)
             bool has_telemetry = process_probe_response(payload, payload_len, &t, &u, &s);
 
             uint8_t slot = (uint8_t)(s_probe_state.current_id - 1U);
+            // Atualiza UI com leituras da sonda que acabou de ser instalada.
             app_model_set_probe_snapshot(slot, true, has_telemetry, t, u, s);
 
             s_probe_state.completed_count++;
@@ -491,6 +524,7 @@ void probe_install_manager_periodic(uint32_t now_ms)
 
             s_probe_state.current_id++;
             if (s_probe_state.current_id > PROBE_MAX_ID) {
+                // Fase 3: finaliza automaticamente ao concluir os 4 IDs.
                 s_probe_state.stage = PROBE_STAGE_DONE;
                 app_model_set_probe_install_status(false, true, s_probe_state.completed_count);
                 ESP_LOGI(TAG, "Instalacao de sondas concluida (4/4)");
@@ -502,6 +536,7 @@ void probe_install_manager_periodic(uint32_t now_ms)
 
         if ((now_ms - s_probe_state.last_tx_ms) >= PROBE_ASSIGN_RETRY_MS) {
             if (s_probe_state.assign_retry_count < PROBE_ASSIGN_MAX_RETRY) {
+                // Retry de atribuicao para melhorar robustez em barramento ruidoso.
                 send_probe_assignment(s_probe_state.current_id);
                 s_probe_state.assign_retry_count++;
                 s_probe_state.last_tx_ms = now_ms;
@@ -546,6 +581,7 @@ void probe_monitor_manager_periodic(uint32_t now_ms)
             return;
         }
 
+        // Envia consulta do sensor atual (ID 1..4).
         send_probe_read_request(s_probe_monitor.current_id);
         s_probe_monitor.stage_started_ms = now_ms;
         s_probe_monitor.stage = PROBE_MONITOR_WAIT_RESPONSE;
@@ -582,7 +618,7 @@ void probe_monitor_manager_periodic(uint32_t now_ms)
         }
 
         if ((now_ms - s_probe_monitor.stage_started_ms) >= PROBE_MONITOR_RESPONSE_TIMEOUT_MS) {
-            // Timeout do sensor atual: marca canal como ausente para UI mostrar __._
+            // Timeout do sensor atual: marca canal ausente para UI mostrar __._
             uint8_t slot = (uint8_t)(s_probe_monitor.current_id - 1U);
             s_probe_monitor.data[slot].installed = false;
             app_model_set_probe_snapshot(slot, false, false, 0.0f, 0.0f, 0.0f);
@@ -601,6 +637,7 @@ void probe_monitor_manager_periodic(uint32_t now_ms)
     }
 
     if (s_probe_monitor.stage == PROBE_MONITOR_WAIT_NEXT_SCAN) {
+        // Intervalo entre varreduras completas para reduzir carga em UART/CPU.
         if ((now_ms - s_probe_monitor.scan_completed_ms) >= PROBE_MONITOR_SCAN_PERIOD_MS) {
             s_probe_monitor.current_id = 1;
             s_probe_monitor.stage = PROBE_MONITOR_SEND;
@@ -628,7 +665,7 @@ void run_uninstall_sequence(uint32_t now_ms)
             return;
         }
 
-        // Fechou uma varredura completa dos quatro IDs.
+        // Fechou uma varredura completa dos quatro IDs e avanca ciclo redundante.
         s_uninstall_state.target_id = 1;
         s_uninstall_state.cycle_index++;
 

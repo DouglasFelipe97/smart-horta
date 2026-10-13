@@ -49,7 +49,14 @@ void io_task(void *pvParameters){
             }
         }
 
-        // Rotina de instalacao executa em background sem bloquear UI/teclado.
+        // Orquestracao central das rotinas de sondas:
+        // 1) Cada manager e habilitado apenas quando sua tela esta ativa.
+        // 2) As rotinas sao chamadas em modo tick (nao bloqueante), mantendo
+        //    responsividade do teclado e refresh da UI.
+        // 3) Uma rotina inativa nao transmite nem consome barramento UART.
+        //
+        // Como o loop roda a cada ~50ms, este e o "relogio" base das FSMs.
+        // Cada FSM aplica seus proprios timeouts internos (100ms, 500ms, 1200ms etc.).
         probe_install_manager_set_active(app_model_is_probe_install_screen_active());
         probe_uninstall_manager_set_active(app_model_is_probe_uninstall_screen_active());
         probe_monitor_manager_set_active(app_model_is_probe_list_screen_active());

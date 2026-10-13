@@ -42,6 +42,10 @@ typedef struct {
 
 // Snapshot para leitura sem expor estado interno.
 
+// Snapshot de uma sonda para renderizacao da UI.
+// installed  : representa se a sonda e considerada presente/ativa no barramento.
+// has_reading: indica se os campos T/U/S carregam leitura valida neste ciclo.
+//              Quando falso, a UI exibe placeholder (__._) para os tres valores.
 typedef struct {
     bool installed;
     bool has_reading;
@@ -50,6 +54,9 @@ typedef struct {
     float soil_humidity;
 } app_probe_snapshot_t;
 
+// Snapshot global da aplicacao lido pelas tasks de renderizacao/IO.
+// A secao "probes" concentra o estado visual de instalacao, desinstalacao
+// e monitoramento ciclico de telemetria da tela "Sondas".
 typedef struct {
     app_screen_t screen;
     int adc_raw;
@@ -100,18 +107,23 @@ bool app_model_is_key_beep_enabled(void);
 void app_model_check_inactivity_timeout(uint32_t now_ms);
 
 // Informa se a tela atual e Ajustes->Instalar Sondas->Instalar.
+// Usado para ligar/desligar automaticamente a maquina de estados de instalacao.
 bool app_model_is_probe_install_screen_active(void);
 
 // Informa se a tela atual e Ajustes->Instalar Sondas->Desinstalar.
+// Usado para ligar/desligar automaticamente a rotina de desinstalacao.
 bool app_model_is_probe_uninstall_screen_active(void);
 
 // Informa se a tela atual e Ajustes->Instalar Sondas->Sondas.
+// Usado para ligar/desligar automaticamente o polling ciclico de telemetria.
 bool app_model_is_probe_list_screen_active(void);
 
 // Atualiza estado geral da rotina de instalacao das sondas.
+// completed_count representa quantas sondas (0..4) ja receberam ID definitivo.
 void app_model_set_probe_install_status(bool running, bool finished, uint8_t completed_count);
 
 // Atualiza estado geral da rotina de desinstalacao das sondas.
+// cycle representa o progresso do ciclo redundante (1..3).
 void app_model_set_probe_uninstall_status(bool running, bool finished, uint8_t cycle);
 
 // Atualiza telemetria/estado de uma sonda (slot 0..3 para S1..S4).
@@ -122,7 +134,8 @@ void app_model_set_probe_snapshot(uint8_t probe_slot,
                                   float air_humidity,
                                   float soil_humidity);
 
-// Reseta placeholders e status da rotina de instalacao para inicio limpo.
+// Reseta placeholders e status da rotina de instalacao/desinstalacao para inicio limpo.
+// Esta funcao e chamada na entrada dos fluxos para evitar reuso de dados antigos.
 void app_model_reset_probe_install_data(void);
 
 // Retorna automaticamente da tela de desinstalacao para o submenu "Instalar Sondas".
