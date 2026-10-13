@@ -6,6 +6,7 @@
 #include "driver/ledc.h"
 #include "driver/i2c.h"
 #include "esp_err.h"
+#include "esp_log.h"
 
 // ------------------------------
 // Mapa de pinos da aplicacao
@@ -34,14 +35,14 @@
 #define APP_LCD_PIN_CS           GPIO_NUM_5
 #define APP_LCD_PIN_DATA         GPIO_NUM_23
 #define APP_LCD_PIN_CLK          GPIO_NUM_18
-#define APP_LCD_PIN_RST          GPIO_NUM_22
+#define APP_LCD_PIN_RST          GPIO_NUM_32
 
 // ------------------------------
 // Configuracao do barramento I2C para RTC DS3231
 // ------------------------------
 #define APP_RTC_I2C_PORT         I2C_NUM_0
 #define APP_RTC_I2C_SDA_PIN      GPIO_NUM_21
-#define APP_RTC_I2C_SCL_PIN      GPIO_NUM_19
+#define APP_RTC_I2C_SCL_PIN      GPIO_NUM_22
 #define APP_RTC_I2C_FREQ_HZ      100000
 
 // ------------------------------

@@ -40,7 +40,7 @@ typedef struct {
 } keyboard_ctx_t;
 
 static keyboard_ctx_t s_kb;
-
+/*Converte valor ADC em tecla simbolica. */
 static app_key_t map_adc_to_key(int raw)
 {
     // Ordem importa: cada if representa um limite superior de faixa.
@@ -78,7 +78,7 @@ uint32_t keyboard_adc(void){
     int raw = adc1_get_raw(APP_ADC_KEYBOARD_CHANNEL);
     return raw;
 }
-
+/*Função que processa eventos do teclado ADC. */
 app_key_t keyboard_adc_poll_event(int *raw_value)
 {
     // 1) Faz uma leitura no canal ADC do teclado.
@@ -93,11 +93,11 @@ app_key_t keyboard_adc_poll_event(int *raw_value)
     app_key_t current = map_adc_to_key(raw);
 
     // 4) Debounce por estabilidade em N leituras consecutivas.
-    if (current == s_kb.last_raw_key) {
-        if (s_kb.stable_count < KEY_DEBOUNCE_COUNT) {
+    if (current == s_kb.last_raw_key) {         //se a tecla atual for igual a ultima tecla lida, incrementa o contador de estabilidade
+        if (s_kb.stable_count < KEY_DEBOUNCE_COUNT) {   //e o contador de estabilidade for menor que o limiter
             s_kb.stable_count++;
         }
-    } else {
+    } else {                                    //se a tecla atual for diferente a ultima tecla lida, zera o contador de estabilidade
         // Leitura mudou: reinicia contador de estabilidade.
         s_kb.last_raw_key = current;
         s_kb.stable_count = 0;
@@ -105,10 +105,10 @@ app_key_t keyboard_adc_poll_event(int *raw_value)
 
     // 5) Evento unico: dispara apenas quando muda para uma tecla estavel.
     //    Exemplo: segurou ENTER por muito tempo -> sai apenas um APP_KEY_ENTER.
-    if (s_kb.stable_count >= KEY_DEBOUNCE_COUNT && current != s_kb.stable_key) {
-        s_kb.stable_key = current;
+    if (s_kb.stable_count >= KEY_DEBOUNCE_COUNT && current != s_kb.stable_key) {    //se o contador de estabilidade for maior ou igual ao limite e a tecla atual for diferente da ultima tecla estavel
+        s_kb.stable_key = current;                          // atualiza a ultima tecla estavel
         if (current != APP_KEY_NONE) {
-            return current;
+            return current;                             // e retorna a tecla atual
         }
     }
 

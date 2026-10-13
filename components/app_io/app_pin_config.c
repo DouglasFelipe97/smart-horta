@@ -88,13 +88,17 @@ esp_err_t app_configure_rtc_i2c(void)
         .clk_flags = 0,
     };
 
+// Tenta deletar; se não estava instalado, ignora o erro.
+    esp_err_t del_err = i2c_driver_delete(APP_RTC_I2C_PORT);
+    if (del_err != ESP_OK && del_err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGI("I2C", "delete retornou: %s", esp_err_to_name(del_err));
+    }
+
     esp_err_t err = i2c_param_config(APP_RTC_I2C_PORT, &conf);
     if (err != ESP_OK) {
         return err;
     }
 
-    // Se o driver ja estiver instalado, reinstalamos para manter idempotente.
-    i2c_driver_delete(APP_RTC_I2C_PORT);
     return i2c_driver_install(APP_RTC_I2C_PORT, conf.mode, 0, 0, 0);
 }
 

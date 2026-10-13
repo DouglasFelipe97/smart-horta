@@ -25,7 +25,7 @@ void io_task(void *pvParameters){
         uint32_t now_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
         /*Toggle led*/
         if (now_ms - last_led_toggle_ms >= /*led_period_ms*/ 250) {     /*Se o periodo desde a ultima mdança de estado for maior que o valor de periodo do led */
-            last_led_toggle_ms = now_ms;
+            last_led_toggle_ms = now_ms;        //salva o tempo da ultima mudança de estado
             led_state = !led_state;
             // LED1 e LED2 ficam em fases opostas.
             gpio_set_level(APP_LED_1_PIN, led_state ? 1 : 0);
@@ -51,7 +51,7 @@ void io_task(void *pvParameters){
 }
 
 void adc_task(void *pvParameters){
-    keyboard_adc_init();
+    keyboard_adc_init();        //inicia o teclado ADC
     while (1) {
         //    - Leitura do teclado analogico.
         //    - Guarda o valor bruto para visualizacao no display (mapeamento).

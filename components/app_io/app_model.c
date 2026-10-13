@@ -232,6 +232,7 @@ void app_model_init(void)
     s_model.datetime.year = 2026;
     s_model.datetime.month = 1;
     s_model.datetime.day = 1;
+    s_model.datetime.weekday = 5;
     s_model.datetime.hour = 0;
     s_model.datetime.minute = 0;
     s_model.datetime.second = 0;
@@ -448,9 +449,9 @@ bool app_model_take_key_press_flag(void)
     bool has_key_press = false;
 
     lock_model();
-    if (s_model.key_press_pending) {
-        has_key_press = true;
-        s_model.key_press_pending = false;
+    if (s_model.key_press_pending) {    //se houver um evento de tecla pendente,  
+        has_key_press = true;       //seta a variavel has_key_press como true
+        s_model.key_press_pending = false;  //e zera a flag de evento de tecla pendente
     }
     unlock_model();
 
@@ -462,7 +463,7 @@ bool app_model_is_key_beep_enabled(void)
     bool enabled;
 
     lock_model();
-    enabled = s_model.key_beep_enabled;
+    enabled = s_model.key_beep_enabled;     //status da funcionalidade de beep de tecla
     unlock_model();
 
     return enabled;

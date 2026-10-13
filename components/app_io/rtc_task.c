@@ -24,6 +24,18 @@ static uint8_t from_bcd(uint8_t val)
     return (uint8_t)(((val >> 4U) * 10U) + (val & 0x0FU));
 }
 
+static uint8_t weekday_from_date(uint16_t year, uint8_t month, uint8_t day)
+{
+    static const uint8_t month_offsets[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+
+    if (month < 3U) {
+        year--;
+    }
+
+    return (uint8_t)((year + year / 4U - year / 100U + year / 400U
+                      + month_offsets[month - 1U] + day) % 7U + 1U);
+}
+
 static esp_err_t ds3231_read_datetime(app_datetime_t *dt)
 {
     if (dt == NULL) {
@@ -50,6 +62,7 @@ static esp_err_t ds3231_read_datetime(app_datetime_t *dt)
     dt->minute = from_bcd((uint8_t)(data[1] & 0x7F));
     dt->hour = from_bcd((uint8_t)(data[2] & 0x3F));
     dt->day = from_bcd((uint8_t)(data[4] & 0x3F));
+    dt->weekday = (uint8_t)(data[3] & 0x07);
     dt->month = from_bcd((uint8_t)(data[5] & 0x1F));
     dt->year = (uint16_t)(2000U + from_bcd(data[6]));
 
@@ -67,7 +80,7 @@ static esp_err_t ds3231_write_datetime(const app_datetime_t *dt)
         to_bcd(dt->second),
         to_bcd(dt->minute),
         to_bcd(dt->hour),
-        1, // dia da semana (fixo por enquanto)
+        weekday_from_date(dt->year, dt->month, dt->day),
         to_bcd(dt->day),
         to_bcd(dt->month),
         to_bcd((uint8_t)(dt->year % 100U)),

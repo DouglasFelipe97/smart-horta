@@ -20,21 +20,16 @@ static const char *TAG_LCD = "DISPLAY_TASK";
 static void draw_home(u8g2_t *u8g2, const app_state_snapshot_t *st)
 {
     char line[32];
+    static const char *days_of_week[] = {"none", "Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"};   
 
     u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
-    u8g2_DrawStr(u8g2, 2, 10, "TELA INICIAL");
-    u8g2_DrawHLine(u8g2, 0, 12, 128);
 
-    snprintf(line, sizeof(line), "Data: %02u/%02u/%04u", st->datetime.day, st->datetime.month, st->datetime.year);
-    u8g2_DrawStr(u8g2, 2, 26, line);
+    snprintf(line, sizeof(line), "%s %02u/%02u/%04u", days_of_week[st->datetime.weekday], st->datetime.day, st->datetime.month, st->datetime.year);
+    u8g2_DrawStr(u8g2, 3, 10, line);
 
-    snprintf(line, sizeof(line), "Hora: %02u:%02u:%02u", st->datetime.hour, st->datetime.minute, st->datetime.second);
-    u8g2_DrawStr(u8g2, 2, 38, line);
+    snprintf(line, sizeof(line), "%02u:%02u", st->datetime.hour, st->datetime.minute);
+    u8g2_DrawStr(u8g2, 92, 10, line);
 
-    snprintf(line, sizeof(line), "AD raw: %4d", st->adc_raw);
-    u8g2_DrawStr(u8g2, 2, 50, line);
-
-    // u8g2_DrawStr(u8g2, 0, 63, "ENTER=Menu");
 }
 
 static void draw_main_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
@@ -47,8 +42,8 @@ static void draw_main_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
     u8g2_DrawHLine(u8g2, 0, 12, 128);
 
     for (int i = 0; i < 3; i++) {
-        snprintf(line, sizeof(line), "%c %s", (st->menu_index == (uint8_t)i) ? '>' : ' ', items[i]);
-        u8g2_DrawStr(u8g2, 2, 26 + (i * 12), line);
+        snprintf(line, sizeof(line), "%c%s", (st->menu_index == (uint8_t)i) ? '>' : ' ', items[i]);
+        u8g2_DrawStr(u8g2, 2, 23 + (i * 12), line);
     }
 }
 
@@ -96,18 +91,17 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
             default:
                 break;
         }
-
-        u8g2_DrawStr(u8g2, 2, 22, "> Data");
-        snprintf(line, sizeof(line), "%02u/%02u/%04u", st->datetime.day, st->datetime.month, st->datetime.year);
+        u8g2_DrawStr(u8g2, 2, 22, ">Data");
+        snprintf(line, sizeof(line), "%s", field_name);
         u8g2_DrawStr(u8g2, 2, 34, line);
-        snprintf(line, sizeof(line), "%02u:%02u:%02u", st->datetime.hour, st->datetime.minute, st->datetime.second);
+        snprintf(line, sizeof(line), "%02u/%02u/%04u", st->datetime.day, st->datetime.month, st->datetime.year);
         u8g2_DrawStr(u8g2, 2, 46, line);
-        snprintf(line, sizeof(line), "Campo: %s", field_name);
+        snprintf(line, sizeof(line), "%02u:%02u:%02u", st->datetime.hour, st->datetime.minute, st->datetime.second);
         u8g2_DrawStr(u8g2, 2, 58, line);
     } else if (st->settings_temperature_mode == 1) {
         u8g2_DrawStr(u8g2, 2, 22, "> Temperaturas");
         for (int i = 0; i < 2; i++) {
-            snprintf(line, sizeof(line), "%c %s", (st->temperature_index == (uint8_t)i) ? '>' : ' ', temp_items[i]);
+            snprintf(line, sizeof(line), "%c%s", (st->temperature_index == (uint8_t)i) ? '>' : ' ', temp_items[i]);
             u8g2_DrawStr(u8g2, 2, 36 + (i * 12), line);
         }
     } else if (st->settings_temperature_mode == 2) {
@@ -123,15 +117,21 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
     } else if (st->settings_buzzer_mode == 1) {
         u8g2_DrawStr(u8g2, 2, 22, "> Buzzer");
         for (int i = 0; i < 2; i++) {
-            snprintf(line, sizeof(line), "%c %s", (st->buzzer_index == (uint8_t)i) ? '>' : ' ', buzzer_items[i]);
+            snprintf(line, sizeof(line), "%c%s", (st->buzzer_index == (uint8_t)i) ? '>' : ' ', buzzer_items[i]);
             u8g2_DrawStr(u8g2, 2, 36 + (i * 12), line);
         }
         snprintf(line, sizeof(line), "Atual: %s", st->key_beep_enabled ? "ON" : "OFF");
         u8g2_DrawStr(u8g2, 2, 60, line);
     } else {
         for (int i = 0; i < 5; i++) {
-            snprintf(line, sizeof(line), "%c %s", (st->settings_index == (uint8_t)i) ? '>' : ' ', items[i]);
-            u8g2_DrawStr(u8g2, 2, 22 + (i * 10), line);
+            if(st->settings_index < 4){
+                snprintf(line, sizeof(line), "%c%s", (st->settings_index == (uint8_t)i) ? '>' : ' ', items[i]);
+                u8g2_DrawStr(u8g2, 2, 23 + (i * 12), line);
+            }
+            else if(st->settings_index >= 4 && i >= 4){
+                snprintf(line, sizeof(line), "%c%s", (st->settings_index == (uint8_t)i) ? '>' : ' ', items[i]);
+                u8g2_DrawStr(u8g2, 2, 23 + ((i-4) * 12), line);
+            }
         }
     }
 }
