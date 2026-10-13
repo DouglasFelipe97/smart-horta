@@ -573,6 +573,18 @@ bool app_model_is_probe_uninstall_screen_active(void)
     return active;
 }
 
+bool app_model_is_probe_list_screen_active(void)
+{
+    bool active;
+
+    lock_model();
+    active = (s_model.screen == APP_SCREEN_MENU_SETTINGS) &&
+             (s_model.settings_probe_mode == APP_PROBE_MODE_LIST);
+    unlock_model();
+
+    return active;
+}
+
 void app_model_set_probe_install_status(bool running, bool finished, uint8_t completed_count)
 {
     lock_model();

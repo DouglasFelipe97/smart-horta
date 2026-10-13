@@ -105,6 +105,9 @@ bool app_model_is_probe_install_screen_active(void);
 // Informa se a tela atual e Ajustes->Instalar Sondas->Desinstalar.
 bool app_model_is_probe_uninstall_screen_active(void);
 
+// Informa se a tela atual e Ajustes->Instalar Sondas->Sondas.
+bool app_model_is_probe_list_screen_active(void);
+
 // Atualiza estado geral da rotina de instalacao das sondas.
 void app_model_set_probe_install_status(bool running, bool finished, uint8_t completed_count);
 

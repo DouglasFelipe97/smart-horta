@@ -16,6 +16,7 @@
 #define PROBE_FRAME_DELIMITER      0x55
 #define PROBE_SW_VERSION           0x01
 #define PROBE_INSTALL_REGISTER     0x10
+#define PROBE_READ_REGISTER        0x20
 #define PROBE_PAYLOAD_LENGTH       3
 #define PROBE_FRAME_TX_SIZE        9
 
@@ -29,6 +30,10 @@
 #define PROBE_UNINSTALL_CYCLES     3U
 #define PROBE_UNINSTALL_GAP_MS     80U
 #define PROBE_UNINSTALL_RETURN_MS  500U
+
+#define PROBE_MONITOR_RESPONSE_TIMEOUT_MS 100U
+#define PROBE_MONITOR_GAP_MS       30U
+#define PROBE_MONITOR_SCAN_PERIOD_MS 1200U
 
 static const char *TAG = "PROBE_INSTALL";
 
@@ -68,8 +73,32 @@ typedef struct {
     uint32_t finished_ms;
 } probe_uninstall_state_t;
 
+typedef struct {
+    float temp;
+    float hum;
+    float soil;
+    bool installed;
+} ProbeData;
+
+typedef enum {
+    PROBE_MONITOR_IDLE = 0,
+    PROBE_MONITOR_SEND,
+    PROBE_MONITOR_WAIT_RESPONSE,
+    PROBE_MONITOR_WAIT_NEXT_SCAN,
+} probe_monitor_stage_t;
+
+typedef struct {
+    bool active;
+    probe_monitor_stage_t stage;
+    uint8_t current_id;
+    uint32_t stage_started_ms;
+    uint32_t scan_completed_ms;
+    ProbeData data[APP_PROBE_COUNT];
+} probe_monitor_state_t;
+
 static probe_install_state_t s_probe_state;
 static probe_uninstall_state_t s_uninstall_state;
+static probe_monitor_state_t s_probe_monitor;
 static bool s_uart_initialized = false;
 
 static uint16_t crc16_modbus(const uint8_t *data, size_t len)
@@ -90,7 +119,8 @@ static uint16_t crc16_modbus(const uint8_t *data, size_t len)
     return crc;
 }
 
-static size_t build_probe_frame(uint8_t id, uint8_t *out_buf, size_t out_buf_len)
+static size_t build_probe_frame(uint8_t reg, uint8_t id, uint8_t reserved,
+                                uint8_t *out_buf, size_t out_buf_len)
 {
     if (out_buf == NULL || out_buf_len < PROBE_FRAME_TX_SIZE) {
         return 0;
@@ -100,9 +130,9 @@ static size_t build_probe_frame(uint8_t id, uint8_t *out_buf, size_t out_buf_len
     frame.start = PROBE_FRAME_DELIMITER;
     frame.version = PROBE_SW_VERSION;
     frame.length = PROBE_PAYLOAD_LENGTH;
-    frame.reg = PROBE_INSTALL_REGISTER;
+    frame.reg = reg;
     frame.id = id;
-    frame.reserved = 0x00;
+    frame.reserved = reserved;
 
     // CRC calculado sobre versao + tamanho + payload (exclui delimitadores).
     uint8_t crc_input[] = {
@@ -131,7 +161,7 @@ static size_t build_probe_frame(uint8_t id, uint8_t *out_buf, size_t out_buf_len
 static size_t build_probe_uninstall_frame(uint8_t *out_buf, size_t out_buf_len)
 {
     // Reutiliza framing padrao: campo de ID gravado recebe 0xFF (estado virgem).
-    return build_probe_frame(PROBE_DISCOVERY_ID, out_buf, out_buf_len);
+    return build_probe_frame(PROBE_INSTALL_REGISTER, PROBE_DISCOVERY_ID, 0x00, out_buf, out_buf_len);
 }
 
 static void select_probe_target_address(uint8_t target_id)
@@ -143,6 +173,7 @@ static void select_probe_target_address(uint8_t target_id)
 
 static bool parse_probe_frame(const uint8_t *frame,
                               size_t frame_len,
+                              uint8_t *out_reg,
                               uint8_t *out_id,
                               const uint8_t **out_payload,
                               size_t *out_payload_len)
@@ -172,9 +203,8 @@ static bool parse_probe_frame(const uint8_t *frame,
         return false;
     }
 
-    // Payload minimo: reg, id, reservado.
-    if (frame[3] != PROBE_INSTALL_REGISTER) {
-        return false;
+    if (out_reg != NULL) {
+        *out_reg = frame[3];
     }
 
     if (out_id != NULL) {
@@ -229,7 +259,8 @@ static bool uart_read_probe_frame(uint8_t *buf, size_t buf_size, size_t *out_len
 void send_probe_discovery(void)
 {
     uint8_t tx_frame[PROBE_FRAME_TX_SIZE] = {0};
-    size_t tx_len = build_probe_frame(PROBE_DISCOVERY_ID, tx_frame, sizeof(tx_frame));
+    size_t tx_len = build_probe_frame(PROBE_INSTALL_REGISTER, PROBE_DISCOVERY_ID, 0x00,
+                                      tx_frame, sizeof(tx_frame));
     if (tx_len == 0) {
         return;
     }
@@ -240,7 +271,8 @@ void send_probe_discovery(void)
 void send_probe_assignment(uint8_t id)
 {
     uint8_t tx_frame[PROBE_FRAME_TX_SIZE] = {0};
-    size_t tx_len = build_probe_frame(id, tx_frame, sizeof(tx_frame));
+    size_t tx_len = build_probe_frame(PROBE_INSTALL_REGISTER, id, 0x00,
+                                      tx_frame, sizeof(tx_frame));
     if (tx_len == 0) {
         return;
     }
@@ -258,6 +290,18 @@ static void send_probe_uninstall(uint8_t target_id)
 
     // Direciona transmissao para o alvo corrente (S1..S4) antes de gravar 0xFF.
     select_probe_target_address(target_id);
+    uart_write_bytes(PROBE_UART_PORT, (const char *)tx_frame, tx_len);
+}
+
+static void send_probe_read_request(uint8_t id)
+{
+    uint8_t tx_frame[PROBE_FRAME_TX_SIZE] = {0};
+    size_t tx_len = build_probe_frame(PROBE_READ_REGISTER, id, 0x00,
+                                      tx_frame, sizeof(tx_frame));
+    if (tx_len == 0) {
+        return;
+    }
+
     uart_write_bytes(PROBE_UART_PORT, (const char *)tx_frame, tx_len);
 }
 
@@ -296,6 +340,7 @@ void probe_install_manager_init(void)
 {
     memset(&s_probe_state, 0, sizeof(s_probe_state));
     memset(&s_uninstall_state, 0, sizeof(s_uninstall_state));
+    memset(&s_probe_monitor, 0, sizeof(s_probe_monitor));
 
     uart_config_t cfg = {
         .baud_rate = PROBE_UART_BAUDRATE,
@@ -312,6 +357,33 @@ void probe_install_manager_init(void)
                                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
 
     s_uart_initialized = true;
+}
+
+void probe_monitor_manager_set_active(bool active)
+{
+    if (!s_uart_initialized) {
+        return;
+    }
+
+    if (active && !s_probe_monitor.active) {
+        s_probe_monitor.active = true;
+        s_probe_monitor.stage = PROBE_MONITOR_SEND;
+        s_probe_monitor.current_id = 1;
+        s_probe_monitor.stage_started_ms = 0;
+        s_probe_monitor.scan_completed_ms = 0;
+
+        // Tela Sondas inicia com mascara para todos os canais.
+        for (int i = 0; i < APP_PROBE_COUNT; i++) {
+            s_probe_monitor.data[i].installed = false;
+            s_probe_monitor.data[i].temp = 0.0f;
+            s_probe_monitor.data[i].hum = 0.0f;
+            s_probe_monitor.data[i].soil = 0.0f;
+            app_model_set_probe_snapshot((uint8_t)i, false, false, 0.0f, 0.0f, 0.0f);
+        }
+    } else if (!active && s_probe_monitor.active) {
+        s_probe_monitor.active = false;
+        s_probe_monitor.stage = PROBE_MONITOR_IDLE;
+    }
 }
 
 void probe_install_manager_set_active(bool active)
@@ -367,13 +439,14 @@ void probe_install_manager_periodic(uint32_t now_ms)
 
     uint8_t rx_buf[PROBE_UART_RX_BUFFER_SIZE] = {0};
     size_t frame_len = 0;
+    uint8_t rx_reg = 0;
     uint8_t rx_id = 0;
     const uint8_t *payload = NULL;
     size_t payload_len = 0;
 
     bool has_valid_response = false;
     if (uart_read_probe_frame(rx_buf, sizeof(rx_buf), &frame_len)) {
-        has_valid_response = parse_probe_frame(rx_buf, frame_len, &rx_id, &payload, &payload_len);
+        has_valid_response = parse_probe_frame(rx_buf, frame_len, &rx_reg, &rx_id, &payload, &payload_len);
     }
 
     if (s_probe_state.stage == PROBE_STAGE_DISCOVERY) {
@@ -383,6 +456,9 @@ void probe_install_manager_periodic(uint32_t now_ms)
         }
 
         if (has_valid_response) {
+            if (rx_reg != PROBE_INSTALL_REGISTER) {
+                return;
+            }
             // Encontrou sonda no barramento: envia atribuicao para ID atual.
             send_probe_assignment(s_probe_state.current_id);
             s_probe_state.last_tx_ms = now_ms;
@@ -395,6 +471,9 @@ void probe_install_manager_periodic(uint32_t now_ms)
 
     if (s_probe_state.stage == PROBE_STAGE_WAIT_ASSIGN_ACK) {
         if (has_valid_response) {
+            if (rx_reg != PROBE_INSTALL_REGISTER) {
+                return;
+            }
             if (rx_id != s_probe_state.current_id && rx_id != PROBE_DISCOVERY_ID) {
                 return;
             }
@@ -440,6 +519,92 @@ void probe_install_manager_periodic(uint32_t now_ms)
     if (s_probe_state.stage == PROBE_STAGE_DONE) {
         // Mantem estado de termino enquanto usuario estiver na tela.
         return;
+    }
+}
+
+void probe_monitor_manager_periodic(uint32_t now_ms)
+{
+    if (!s_uart_initialized || !s_probe_monitor.active) {
+        return;
+    }
+
+    uint8_t rx_buf[PROBE_UART_RX_BUFFER_SIZE] = {0};
+    size_t frame_len = 0;
+    uint8_t rx_reg = 0;
+    uint8_t rx_id = 0;
+    const uint8_t *payload = NULL;
+    size_t payload_len = 0;
+
+    bool has_valid_response = false;
+    if (uart_read_probe_frame(rx_buf, sizeof(rx_buf), &frame_len)) {
+        has_valid_response = parse_probe_frame(rx_buf, frame_len, &rx_reg, &rx_id, &payload, &payload_len);
+    }
+
+    if (s_probe_monitor.stage == PROBE_MONITOR_SEND) {
+        if (s_probe_monitor.stage_started_ms != 0 &&
+            (now_ms - s_probe_monitor.stage_started_ms) < PROBE_MONITOR_GAP_MS) {
+            return;
+        }
+
+        send_probe_read_request(s_probe_monitor.current_id);
+        s_probe_monitor.stage_started_ms = now_ms;
+        s_probe_monitor.stage = PROBE_MONITOR_WAIT_RESPONSE;
+        return;
+    }
+
+    if (s_probe_monitor.stage == PROBE_MONITOR_WAIT_RESPONSE) {
+        bool matched_response = has_valid_response &&
+                                (rx_reg == PROBE_READ_REGISTER) &&
+                                (rx_id == s_probe_monitor.current_id);
+
+        if (matched_response) {
+            float t = 0.0f;
+            float u = 0.0f;
+            float s = 0.0f;
+
+            if (process_probe_response(payload, payload_len, &t, &u, &s)) {
+                uint8_t slot = (uint8_t)(s_probe_monitor.current_id - 1U);
+                s_probe_monitor.data[slot].installed = true;
+                s_probe_monitor.data[slot].temp = t;
+                s_probe_monitor.data[slot].hum = u;
+                s_probe_monitor.data[slot].soil = s;
+                app_model_set_probe_snapshot(slot, true, true, t, u, s);
+            }
+
+            if (s_probe_monitor.current_id < PROBE_MAX_ID) {
+                s_probe_monitor.current_id++;
+                s_probe_monitor.stage = PROBE_MONITOR_SEND;
+            } else {
+                s_probe_monitor.stage = PROBE_MONITOR_WAIT_NEXT_SCAN;
+                s_probe_monitor.scan_completed_ms = now_ms;
+            }
+            return;
+        }
+
+        if ((now_ms - s_probe_monitor.stage_started_ms) >= PROBE_MONITOR_RESPONSE_TIMEOUT_MS) {
+            // Timeout do sensor atual: marca canal como ausente para UI mostrar __._
+            uint8_t slot = (uint8_t)(s_probe_monitor.current_id - 1U);
+            s_probe_monitor.data[slot].installed = false;
+            app_model_set_probe_snapshot(slot, false, false, 0.0f, 0.0f, 0.0f);
+
+            if (s_probe_monitor.current_id < PROBE_MAX_ID) {
+                s_probe_monitor.current_id++;
+                s_probe_monitor.stage = PROBE_MONITOR_SEND;
+            } else {
+                s_probe_monitor.stage = PROBE_MONITOR_WAIT_NEXT_SCAN;
+                s_probe_monitor.scan_completed_ms = now_ms;
+            }
+            return;
+        }
+
+        return;
+    }
+
+    if (s_probe_monitor.stage == PROBE_MONITOR_WAIT_NEXT_SCAN) {
+        if ((now_ms - s_probe_monitor.scan_completed_ms) >= PROBE_MONITOR_SCAN_PERIOD_MS) {
+            s_probe_monitor.current_id = 1;
+            s_probe_monitor.stage = PROBE_MONITOR_SEND;
+        }
     }
 }
 

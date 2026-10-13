@@ -72,7 +72,7 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
     static const char *temp_items[] = {"Curvas", "Offset"};
     static const char *buzzer_items[] = {"Habilitar", "Desabilitar"};
     static const char *probe_items[] = {"Instalar", "Desinstalar", "Sondas"};
-    char line[32];
+    char line[64];
 
     u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
     u8g2_DrawStr(u8g2, 2, 10, "AJUSTES");
@@ -185,13 +185,31 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
         }
         u8g2_DrawStr(u8g2, 2, 60, "Desinstalando...");
     } else if (st->settings_probe_mode == 4) {
-        // Lista vertical das sondas disponiveis.
+        // Tela "Sondas": leitura ciclica em tempo real por sensor.
+        char t_str[8];
+        char u_str[8];
+        char s_str[8];
+
         u8g2_DrawStr(u8g2, 2, 10, "SONDAS");
         u8g2_DrawHLine(u8g2, 0, 12, 128);
-        u8g2_DrawStr(u8g2, 2, 24, "S1");
-        u8g2_DrawStr(u8g2, 2, 36, "S2");
-        u8g2_DrawStr(u8g2, 2, 48, "S3");
-        u8g2_DrawStr(u8g2, 2, 60, "S4");
+
+        u8g2_SetFont(u8g2, u8g2_font_4x6_tr);
+        for (int i = 0; i < APP_PROBE_COUNT; i++) {
+            if (st->probes[i].installed && st->probes[i].has_reading) {
+                snprintf(t_str, sizeof(t_str), "%4.1f", st->probes[i].temperature);
+                snprintf(u_str, sizeof(u_str), "%4.1f", st->probes[i].air_humidity);
+                snprintf(s_str, sizeof(s_str), "%4.1f", st->probes[i].soil_humidity);
+            } else {
+                snprintf(t_str, sizeof(t_str), "__._");
+                snprintf(u_str, sizeof(u_str), "__._");
+                snprintf(s_str, sizeof(s_str), "__._");
+            }
+
+            snprintf(line, sizeof(line), "Sensor %d: T:%s U:%s S:%s", i + 1, t_str, u_str, s_str);
+            u8g2_DrawStr(u8g2, 2, 22 + (i * 10), line);
+        }
+
+        u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
     } else {
         for (int i = 0; i < 5; i++) {
             if(st->settings_index < 4){

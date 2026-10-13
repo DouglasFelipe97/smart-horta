@@ -14,8 +14,14 @@ void probe_install_manager_set_active(bool active);
 // Liga/desliga a rotina de desinstalacao nao bloqueante conforme tela ativa.
 void probe_uninstall_manager_set_active(bool active);
 
+// Liga/desliga polling de telemetria da tela "Sondas" conforme tela ativa.
+void probe_monitor_manager_set_active(bool active);
+
 // Tick periodico para transmissao, recepcao e timeouts.
 void probe_install_manager_periodic(uint32_t now_ms);
+
+// Tick periodico para polling de leitura das sondas (tempo real).
+void probe_monitor_manager_periodic(uint32_t now_ms);
 
 // Envia pacote de descoberta (ID broadcast 0xFF).
 void send_probe_discovery(void);
