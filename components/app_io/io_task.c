@@ -51,7 +51,9 @@ void io_task(void *pvParameters){
 
         // Rotina de instalacao executa em background sem bloquear UI/teclado.
         probe_install_manager_set_active(app_model_is_probe_install_screen_active());
+        probe_uninstall_manager_set_active(app_model_is_probe_uninstall_screen_active());
         probe_install_manager_periodic(now_ms);
+        run_uninstall_sequence(now_ms);
 
         vTaskDelay(pdMS_TO_TICKS(50));
     }

@@ -168,10 +168,22 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
             u8g2_DrawStr(u8g2, 2, 60, "Aguardando");
         }
     } else if (st->settings_probe_mode == 3) {
-        // Tela interna de desinstalacao com rodape fixo.
+        // Tela interna de desinstalacao com status fixo e progresso de ciclos.
         u8g2_DrawStr(u8g2, 2, 10, "DESINSTALAR");
         u8g2_DrawHLine(u8g2, 0, 12, 128);
-        u8g2_DrawStr(u8g2, 2, 60, "Desinstalando");
+        if (st->probe_uninstall_finished) {
+            u8g2_DrawStr(u8g2, 2, 36, "Concluido");
+        } else {
+            uint8_t cycle = st->probe_uninstall_cycle;
+            if (cycle < 1U) {
+                cycle = 1U;
+            } else if (cycle > 3U) {
+                cycle = 3U;
+            }
+            snprintf(line, sizeof(line), "Ciclo %u/3", cycle);
+            u8g2_DrawStr(u8g2, 2, 36, line);
+        }
+        u8g2_DrawStr(u8g2, 2, 60, "Desinstalando...");
     } else if (st->settings_probe_mode == 4) {
         // Lista vertical das sondas disponiveis.
         u8g2_DrawStr(u8g2, 2, 10, "SONDAS");

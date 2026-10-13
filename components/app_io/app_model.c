@@ -18,6 +18,9 @@ typedef struct {
     bool probe_install_running;
     bool probe_install_finished;
     uint8_t probe_install_completed_count;
+    bool probe_uninstall_running;
+    bool probe_uninstall_finished;
+    uint8_t probe_uninstall_cycle;
     app_probe_snapshot_t probes[APP_PROBE_COUNT];
     bool key_beep_enabled;
     bool key_press_pending;
@@ -79,6 +82,9 @@ static void reset_probe_install_data_unlocked(void)
     s_model.probe_install_running = false;
     s_model.probe_install_finished = false;
     s_model.probe_install_completed_count = 0;
+    s_model.probe_uninstall_running = false;
+    s_model.probe_uninstall_finished = false;
+    s_model.probe_uninstall_cycle = 0;
 
     for (int i = 0; i < APP_PROBE_COUNT; i++) {
         s_model.probes[i].installed = false;
@@ -345,6 +351,9 @@ void app_model_get_snapshot(app_state_snapshot_t *snapshot)
     snapshot->probe_install_running = s_model.probe_install_running;
     snapshot->probe_install_finished = s_model.probe_install_finished;
     snapshot->probe_install_completed_count = s_model.probe_install_completed_count;
+    snapshot->probe_uninstall_running = s_model.probe_uninstall_running;
+    snapshot->probe_uninstall_finished = s_model.probe_uninstall_finished;
+    snapshot->probe_uninstall_cycle = s_model.probe_uninstall_cycle;
 
     for (int i = 0; i < APP_PROBE_COUNT; i++) {
         snapshot->probes[i] = s_model.probes[i];
@@ -449,6 +458,7 @@ void app_model_process_key(app_key_t key)
                         reset_probe_install_data_unlocked();
                         s_model.settings_probe_mode = APP_PROBE_MODE_INSTALL;
                     } else if (s_model.probe_menu_index == 1U) {
+                        reset_probe_install_data_unlocked();
                         s_model.settings_probe_mode = APP_PROBE_MODE_UNINSTALL;
                     } else {
                         s_model.settings_probe_mode = APP_PROBE_MODE_LIST;
@@ -551,6 +561,18 @@ bool app_model_is_probe_install_screen_active(void)
     return active;
 }
 
+bool app_model_is_probe_uninstall_screen_active(void)
+{
+    bool active;
+
+    lock_model();
+    active = (s_model.screen == APP_SCREEN_MENU_SETTINGS) &&
+             (s_model.settings_probe_mode == APP_PROBE_MODE_UNINSTALL);
+    unlock_model();
+
+    return active;
+}
+
 void app_model_set_probe_install_status(bool running, bool finished, uint8_t completed_count)
 {
     lock_model();
@@ -559,6 +581,15 @@ void app_model_set_probe_install_status(bool running, bool finished, uint8_t com
     s_model.probe_install_completed_count = (completed_count > APP_PROBE_COUNT)
         ? APP_PROBE_COUNT
         : completed_count;
+    unlock_model();
+}
+
+void app_model_set_probe_uninstall_status(bool running, bool finished, uint8_t cycle)
+{
+    lock_model();
+    s_model.probe_uninstall_running = running;
+    s_model.probe_uninstall_finished = finished;
+    s_model.probe_uninstall_cycle = (cycle > 3U) ? 3U : cycle;
     unlock_model();
 }
 
@@ -586,6 +617,16 @@ void app_model_reset_probe_install_data(void)
 {
     lock_model();
     reset_probe_install_data_unlocked();
+    unlock_model();
+}
+
+void app_model_exit_probe_uninstall_to_menu(void)
+{
+    lock_model();
+    if (s_model.screen == APP_SCREEN_MENU_SETTINGS &&
+        s_model.settings_probe_mode == APP_PROBE_MODE_UNINSTALL) {
+        s_model.settings_probe_mode = APP_PROBE_MODE_MENU;
+    }
     unlock_model();
 }
 

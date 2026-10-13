@@ -65,6 +65,9 @@ typedef struct {
     bool probe_install_running;
     bool probe_install_finished;
     uint8_t probe_install_completed_count;
+    bool probe_uninstall_running;
+    bool probe_uninstall_finished;
+    uint8_t probe_uninstall_cycle;
     app_probe_snapshot_t probes[APP_PROBE_COUNT];
     bool key_beep_enabled;
     uint8_t datetime_field_index;
@@ -99,8 +102,14 @@ void app_model_check_inactivity_timeout(uint32_t now_ms);
 // Informa se a tela atual e Ajustes->Instalar Sondas->Instalar.
 bool app_model_is_probe_install_screen_active(void);
 
+// Informa se a tela atual e Ajustes->Instalar Sondas->Desinstalar.
+bool app_model_is_probe_uninstall_screen_active(void);
+
 // Atualiza estado geral da rotina de instalacao das sondas.
 void app_model_set_probe_install_status(bool running, bool finished, uint8_t completed_count);
+
+// Atualiza estado geral da rotina de desinstalacao das sondas.
+void app_model_set_probe_uninstall_status(bool running, bool finished, uint8_t cycle);
 
 // Atualiza telemetria/estado de uma sonda (slot 0..3 para S1..S4).
 void app_model_set_probe_snapshot(uint8_t probe_slot,
@@ -112,5 +121,8 @@ void app_model_set_probe_snapshot(uint8_t probe_slot,
 
 // Reseta placeholders e status da rotina de instalacao para inicio limpo.
 void app_model_reset_probe_install_data(void);
+
+// Retorna automaticamente da tela de desinstalacao para o submenu "Instalar Sondas".
+void app_model_exit_probe_uninstall_to_menu(void);
 
 #endif

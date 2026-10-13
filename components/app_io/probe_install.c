@@ -26,6 +26,10 @@
 #define PROBE_ASSIGN_RETRY_MS      700U
 #define PROBE_ASSIGN_MAX_RETRY     5U
 
+#define PROBE_UNINSTALL_CYCLES     3U
+#define PROBE_UNINSTALL_GAP_MS     80U
+#define PROBE_UNINSTALL_RETURN_MS  500U
+
 static const char *TAG = "PROBE_INSTALL";
 
 typedef struct __attribute__((packed)) {
@@ -55,7 +59,17 @@ typedef struct {
     uint32_t last_tx_ms;
 } probe_install_state_t;
 
+typedef struct {
+    bool active;
+    bool finished;
+    uint8_t cycle_index;
+    uint8_t target_id;
+    uint32_t last_tx_ms;
+    uint32_t finished_ms;
+} probe_uninstall_state_t;
+
 static probe_install_state_t s_probe_state;
+static probe_uninstall_state_t s_uninstall_state;
 static bool s_uart_initialized = false;
 
 static uint16_t crc16_modbus(const uint8_t *data, size_t len)
@@ -112,6 +126,19 @@ static size_t build_probe_frame(uint8_t id, uint8_t *out_buf, size_t out_buf_len
     out_buf[8] = frame.end;
 
     return PROBE_FRAME_TX_SIZE;
+}
+
+static size_t build_probe_uninstall_frame(uint8_t *out_buf, size_t out_buf_len)
+{
+    // Reutiliza framing padrao: campo de ID gravado recebe 0xFF (estado virgem).
+    return build_probe_frame(PROBE_DISCOVERY_ID, out_buf, out_buf_len);
+}
+
+static void select_probe_target_address(uint8_t target_id)
+{
+    // Hook para selecao de endereco fisico/logico fora do payload, se necessario.
+    // Nesta versao nao ha camada adicional de enderecamento alem do framing.
+    (void)target_id;
 }
 
 static bool parse_probe_frame(const uint8_t *frame,
@@ -221,6 +248,19 @@ void send_probe_assignment(uint8_t id)
     uart_write_bytes(PROBE_UART_PORT, (const char *)tx_frame, tx_len);
 }
 
+static void send_probe_uninstall(uint8_t target_id)
+{
+    uint8_t tx_frame[PROBE_FRAME_TX_SIZE] = {0};
+    size_t tx_len = build_probe_uninstall_frame(tx_frame, sizeof(tx_frame));
+    if (tx_len == 0) {
+        return;
+    }
+
+    // Direciona transmissao para o alvo corrente (S1..S4) antes de gravar 0xFF.
+    select_probe_target_address(target_id);
+    uart_write_bytes(PROBE_UART_PORT, (const char *)tx_frame, tx_len);
+}
+
 bool process_probe_response(const uint8_t *payload,
                             size_t payload_len,
                             float *temperature,
@@ -255,6 +295,7 @@ bool process_probe_response(const uint8_t *payload,
 void probe_install_manager_init(void)
 {
     memset(&s_probe_state, 0, sizeof(s_probe_state));
+    memset(&s_uninstall_state, 0, sizeof(s_uninstall_state));
 
     uart_config_t cfg = {
         .baud_rate = PROBE_UART_BAUDRATE,
@@ -294,6 +335,27 @@ void probe_install_manager_set_active(bool active)
         s_probe_state.active = false;
         s_probe_state.stage = PROBE_STAGE_IDLE;
         app_model_set_probe_install_status(false, false, s_probe_state.completed_count);
+    }
+}
+
+void probe_uninstall_manager_set_active(bool active)
+{
+    if (!s_uart_initialized) {
+        return;
+    }
+
+    if (active && !s_uninstall_state.active) {
+        s_uninstall_state.active = true;
+        s_uninstall_state.finished = false;
+        s_uninstall_state.cycle_index = 0;
+        s_uninstall_state.target_id = 1;
+        s_uninstall_state.last_tx_ms = 0;
+        s_uninstall_state.finished_ms = 0;
+        app_model_set_probe_uninstall_status(true, false, 1U);
+    } else if (!active && s_uninstall_state.active) {
+        s_uninstall_state.active = false;
+        s_uninstall_state.finished = false;
+        app_model_set_probe_uninstall_status(false, false, s_uninstall_state.cycle_index);
     }
 }
 
@@ -378,5 +440,48 @@ void probe_install_manager_periodic(uint32_t now_ms)
     if (s_probe_state.stage == PROBE_STAGE_DONE) {
         // Mantem estado de termino enquanto usuario estiver na tela.
         return;
+    }
+}
+
+void run_uninstall_sequence(uint32_t now_ms)
+{
+    if (!s_uart_initialized || !s_uninstall_state.active) {
+        return;
+    }
+
+    if (!s_uninstall_state.finished) {
+        if ((now_ms - s_uninstall_state.last_tx_ms) < PROBE_UNINSTALL_GAP_MS) {
+            return;
+        }
+
+        // Envia frame de reset para estado virgem (0xFF) por alvo S1..S4.
+        send_probe_uninstall(s_uninstall_state.target_id);
+        s_uninstall_state.last_tx_ms = now_ms;
+
+        if (s_uninstall_state.target_id < PROBE_MAX_ID) {
+            s_uninstall_state.target_id++;
+            return;
+        }
+
+        // Fechou uma varredura completa dos quatro IDs.
+        s_uninstall_state.target_id = 1;
+        s_uninstall_state.cycle_index++;
+
+        if (s_uninstall_state.cycle_index >= PROBE_UNINSTALL_CYCLES) {
+            s_uninstall_state.finished = true;
+            s_uninstall_state.finished_ms = now_ms;
+            app_model_set_probe_uninstall_status(false, true, PROBE_UNINSTALL_CYCLES);
+            return;
+        }
+
+        app_model_set_probe_uninstall_status(true, false, (uint8_t)(s_uninstall_state.cycle_index + 1U));
+        return;
+    }
+
+    // Delay curto para feedback visual antes de voltar automaticamente.
+    if ((now_ms - s_uninstall_state.finished_ms) >= PROBE_UNINSTALL_RETURN_MS) {
+        app_model_exit_probe_uninstall_to_menu();
+        s_uninstall_state.active = false;
+        s_uninstall_state.finished = false;
     }
 }

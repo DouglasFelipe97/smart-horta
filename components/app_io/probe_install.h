@@ -11,6 +11,9 @@ void probe_install_manager_init(void);
 // Liga/desliga a rotina nao bloqueante conforme tela ativa.
 void probe_install_manager_set_active(bool active);
 
+// Liga/desliga a rotina de desinstalacao nao bloqueante conforme tela ativa.
+void probe_uninstall_manager_set_active(bool active);
+
 // Tick periodico para transmissao, recepcao e timeouts.
 void probe_install_manager_periodic(uint32_t now_ms);
 
@@ -27,5 +30,8 @@ bool process_probe_response(const uint8_t *payload,
                             float *temperature,
                             float *air_humidity,
                             float *soil_humidity);
+
+// Executa a sequencia de desinstalacao em ciclos sem bloquear a task chamadora.
+void run_uninstall_sequence(uint32_t now_ms);
 
 #endif
