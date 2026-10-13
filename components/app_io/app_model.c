@@ -13,6 +13,12 @@ typedef struct {
     uint8_t temperature_index;
     uint8_t settings_buzzer_mode;
     uint8_t buzzer_index;
+    uint8_t settings_probe_mode;
+    uint8_t probe_menu_index;
+    bool probe_install_running;
+    bool probe_install_finished;
+    uint8_t probe_install_completed_count;
+    app_probe_snapshot_t probes[APP_PROBE_COUNT];
     bool key_beep_enabled;
     bool key_press_pending;
     uint8_t datetime_field_index;
@@ -31,6 +37,7 @@ static SemaphoreHandle_t s_model_mutex;     //Criando semaforo para usar o mutex
 #define APP_SETTINGS_MENU_ITEMS  5
 #define APP_TEMPERATURE_MENU_ITEMS 2
 #define APP_BUZZER_MENU_ITEMS    2
+#define APP_PROBE_MENU_ITEMS     3
 #define APP_DATE_FIELDS          6
 
 #define APP_TEMPERATURE_MODE_NONE    0
@@ -40,6 +47,12 @@ static SemaphoreHandle_t s_model_mutex;     //Criando semaforo para usar o mutex
 
 #define APP_BUZZER_MODE_NONE     0
 #define APP_BUZZER_MODE_MENU     1
+
+#define APP_PROBE_MODE_NONE      0
+#define APP_PROBE_MODE_MENU      1
+#define APP_PROBE_MODE_INSTALL   2
+#define APP_PROBE_MODE_UNINSTALL 3
+#define APP_PROBE_MODE_LIST      4
 
 #define APP_INACTIVITY_TIMEOUT_MS 30000U
 
@@ -58,6 +71,22 @@ static void reset_settings_submenus(void)
     s_model.settings_editing_datetime = false;
     s_model.settings_temperature_mode = APP_TEMPERATURE_MODE_NONE;
     s_model.settings_buzzer_mode = APP_BUZZER_MODE_NONE;
+    s_model.settings_probe_mode = APP_PROBE_MODE_NONE;
+}
+
+static void reset_probe_install_data_unlocked(void)
+{
+    s_model.probe_install_running = false;
+    s_model.probe_install_finished = false;
+    s_model.probe_install_completed_count = 0;
+
+    for (int i = 0; i < APP_PROBE_COUNT; i++) {
+        s_model.probes[i].installed = false;
+        s_model.probes[i].has_reading = false;
+        s_model.probes[i].temperature = 0.0f;
+        s_model.probes[i].air_humidity = 0.0f;
+        s_model.probes[i].soil_humidity = 0.0f;
+    }
 }
 
 static bool is_leap_year(uint16_t year)
@@ -224,6 +253,9 @@ void app_model_init(void)
     s_model.temperature_index = 0;
     s_model.settings_buzzer_mode = APP_BUZZER_MODE_NONE;
     s_model.buzzer_index = 0;
+    s_model.settings_probe_mode = APP_PROBE_MODE_NONE;
+    s_model.probe_menu_index = 0;
+    reset_probe_install_data_unlocked();
     s_model.key_beep_enabled = true;
     s_model.key_press_pending = false;
     s_model.datetime_field_index = 0;
@@ -308,6 +340,15 @@ void app_model_get_snapshot(app_state_snapshot_t *snapshot)
     snapshot->temperature_index = s_model.temperature_index;
     snapshot->settings_buzzer_mode = s_model.settings_buzzer_mode;
     snapshot->buzzer_index = s_model.buzzer_index;
+    snapshot->settings_probe_mode = s_model.settings_probe_mode;
+    snapshot->probe_menu_index = s_model.probe_menu_index;
+    snapshot->probe_install_running = s_model.probe_install_running;
+    snapshot->probe_install_finished = s_model.probe_install_finished;
+    snapshot->probe_install_completed_count = s_model.probe_install_completed_count;
+
+    for (int i = 0; i < APP_PROBE_COUNT; i++) {
+        snapshot->probes[i] = s_model.probes[i];
+    }
     snapshot->key_beep_enabled = s_model.key_beep_enabled;
     snapshot->datetime_field_index = s_model.datetime_field_index;
 
@@ -397,6 +438,31 @@ void app_model_process_key(app_key_t key)
                 } else if (key == APP_KEY_BACK) {
                     s_model.settings_buzzer_mode = APP_BUZZER_MODE_NONE;
                 }
+            } else if (s_model.settings_probe_mode == APP_PROBE_MODE_MENU) {
+                // Submenu "Instalar Sondas": navega entre Instalar, Desinstalar e Sondas.
+                if (key == APP_KEY_UP) {
+                    s_model.probe_menu_index = (s_model.probe_menu_index + APP_PROBE_MENU_ITEMS - 1U) % APP_PROBE_MENU_ITEMS;
+                } else if (key == APP_KEY_DOWN) {
+                    s_model.probe_menu_index = (s_model.probe_menu_index + 1U) % APP_PROBE_MENU_ITEMS;
+                } else if (key == APP_KEY_ENTER) {
+                    if (s_model.probe_menu_index == 0U) {
+                        reset_probe_install_data_unlocked();
+                        s_model.settings_probe_mode = APP_PROBE_MODE_INSTALL;
+                    } else if (s_model.probe_menu_index == 1U) {
+                        s_model.settings_probe_mode = APP_PROBE_MODE_UNINSTALL;
+                    } else {
+                        s_model.settings_probe_mode = APP_PROBE_MODE_LIST;
+                    }
+                } else if (key == APP_KEY_BACK) {
+                    s_model.settings_probe_mode = APP_PROBE_MODE_NONE;
+                }
+            } else if (s_model.settings_probe_mode == APP_PROBE_MODE_INSTALL ||
+                       s_model.settings_probe_mode == APP_PROBE_MODE_UNINSTALL ||
+                       s_model.settings_probe_mode == APP_PROBE_MODE_LIST) {
+                // Nas telas internas, BACK retorna ao submenu "Instalar Sondas".
+                if (key == APP_KEY_BACK) {
+                    s_model.settings_probe_mode = APP_PROBE_MODE_MENU;
+                }
             } else {
                 if (key == APP_KEY_UP) {
                     s_model.settings_index = (s_model.settings_index + APP_SETTINGS_MENU_ITEMS - 1U) % APP_SETTINGS_MENU_ITEMS;
@@ -417,6 +483,10 @@ void app_model_process_key(app_key_t key)
                     } else if (s_model.settings_index == 2U) {
                         s_model.settings_buzzer_mode = APP_BUZZER_MODE_MENU;
                         s_model.buzzer_index = s_model.key_beep_enabled ? 0U : 1U;
+                    } else if (s_model.settings_index == 4U) {
+                        // Entra no gerenciador de sondas a partir de Ajustes.
+                        s_model.settings_probe_mode = APP_PROBE_MODE_MENU;
+                        s_model.probe_menu_index = 0;
                     }
                 }
             }
@@ -467,6 +537,56 @@ bool app_model_is_key_beep_enabled(void)
     unlock_model();
 
     return enabled;
+}
+
+bool app_model_is_probe_install_screen_active(void)
+{
+    bool active;
+
+    lock_model();
+    active = (s_model.screen == APP_SCREEN_MENU_SETTINGS) &&
+             (s_model.settings_probe_mode == APP_PROBE_MODE_INSTALL);
+    unlock_model();
+
+    return active;
+}
+
+void app_model_set_probe_install_status(bool running, bool finished, uint8_t completed_count)
+{
+    lock_model();
+    s_model.probe_install_running = running;
+    s_model.probe_install_finished = finished;
+    s_model.probe_install_completed_count = (completed_count > APP_PROBE_COUNT)
+        ? APP_PROBE_COUNT
+        : completed_count;
+    unlock_model();
+}
+
+void app_model_set_probe_snapshot(uint8_t probe_slot,
+                                  bool installed,
+                                  bool has_reading,
+                                  float temperature,
+                                  float air_humidity,
+                                  float soil_humidity)
+{
+    if (probe_slot >= APP_PROBE_COUNT) {
+        return;
+    }
+
+    lock_model();
+    s_model.probes[probe_slot].installed = installed;
+    s_model.probes[probe_slot].has_reading = has_reading;
+    s_model.probes[probe_slot].temperature = temperature;
+    s_model.probes[probe_slot].air_humidity = air_humidity;
+    s_model.probes[probe_slot].soil_humidity = soil_humidity;
+    unlock_model();
+}
+
+void app_model_reset_probe_install_data(void)
+{
+    lock_model();
+    reset_probe_install_data_unlocked();
+    unlock_model();
 }
 
 void app_model_check_inactivity_timeout(uint32_t now_ms)

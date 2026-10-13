@@ -10,6 +10,7 @@
 #include "app_model.h"
 // #include "app_menu_functions"
 #include "keyboard.h"
+#include "probe_install.h"
 
 static const char *TAG_IO = "IO_TASK";
 
@@ -19,6 +20,9 @@ void io_task(void *pvParameters){
     // Marcadores de tempo (em ms) para tarefas periodicas.
     uint32_t last_led_toggle_ms = 0;
     uint32_t last_buzzer_toggle_ms = 0;
+
+    // Inicializa UART e estado do instalador de sondas.
+    probe_install_manager_init();
 
     while (1) {
         // Tempo atual em milissegundos baseado no tick do FreeRTOS.
@@ -44,6 +48,10 @@ void io_task(void *pvParameters){
                 gpio_set_level(APP_BUZZER_PIN, 0);
             }
         }
+
+        // Rotina de instalacao executa em background sem bloquear UI/teclado.
+        probe_install_manager_set_active(app_model_is_probe_install_screen_active());
+        probe_install_manager_periodic(now_ms);
 
         vTaskDelay(pdMS_TO_TICKS(50));
     }

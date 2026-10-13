@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#define APP_PROBE_COUNT 4
+
 // Telas principais da aplicacao.
 typedef enum {
     APP_SCREEN_HOME = 0,
@@ -41,6 +43,14 @@ typedef struct {
 // Snapshot para leitura sem expor estado interno.
 
 typedef struct {
+    bool installed;
+    bool has_reading;
+    float temperature;
+    float air_humidity;
+    float soil_humidity;
+} app_probe_snapshot_t;
+
+typedef struct {
     app_screen_t screen;
     int adc_raw;
     uint8_t menu_index;
@@ -50,6 +60,12 @@ typedef struct {
     uint8_t temperature_index;
     uint8_t settings_buzzer_mode;
     uint8_t buzzer_index;
+    uint8_t settings_probe_mode;
+    uint8_t probe_menu_index;
+    bool probe_install_running;
+    bool probe_install_finished;
+    uint8_t probe_install_completed_count;
+    app_probe_snapshot_t probes[APP_PROBE_COUNT];
     bool key_beep_enabled;
     uint8_t datetime_field_index;
     app_datetime_t datetime;
@@ -79,5 +95,22 @@ bool app_model_is_key_beep_enabled(void);
 
 // Verifica timeout de inatividade e retorna para HOME quando necessario.
 void app_model_check_inactivity_timeout(uint32_t now_ms);
+
+// Informa se a tela atual e Ajustes->Instalar Sondas->Instalar.
+bool app_model_is_probe_install_screen_active(void);
+
+// Atualiza estado geral da rotina de instalacao das sondas.
+void app_model_set_probe_install_status(bool running, bool finished, uint8_t completed_count);
+
+// Atualiza telemetria/estado de uma sonda (slot 0..3 para S1..S4).
+void app_model_set_probe_snapshot(uint8_t probe_slot,
+                                  bool installed,
+                                  bool has_reading,
+                                  float temperature,
+                                  float air_humidity,
+                                  float soil_humidity);
+
+// Reseta placeholders e status da rotina de instalacao para inicio limpo.
+void app_model_reset_probe_install_data(void);
 
 #endif

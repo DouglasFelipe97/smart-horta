@@ -56,11 +56,22 @@ static void draw_placeholder_screen(u8g2_t *u8g2, const char *title)
     u8g2_DrawStr(u8g2, 2, 50, "BACK = voltar");
 }
 
+static void format_probe_value(char *out, size_t out_len, bool has_value, float value)
+{
+    if (!has_value) {
+        snprintf(out, out_len, "--.-");
+        return;
+    }
+
+    snprintf(out, out_len, "%4.1f", value);
+}
+
 static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
 {
-    static const char *items[] = {"Data", "Temperaturas", "Buzzer", "Umidade", "Instalar sensores"};
+    static const char *items[] = {"Data", "Temperaturas", "Buzzer", "Umidade", "Instalar Sondas"};
     static const char *temp_items[] = {"Curvas", "Offset"};
     static const char *buzzer_items[] = {"Habilitar", "Desabilitar"};
+    static const char *probe_items[] = {"Instalar", "Desinstalar", "Sondas"};
     char line[32];
 
     u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
@@ -122,6 +133,53 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
         }
         snprintf(line, sizeof(line), "Atual: %s", st->key_beep_enabled ? "ON" : "OFF");
         u8g2_DrawStr(u8g2, 2, 60, line);
+    } else if (st->settings_probe_mode == 1) {
+        // Submenu de gerenciamento de sondas dentro de Ajustes.
+        u8g2_DrawStr(u8g2, 2, 22, "> Instalar Sondas");
+        for (int i = 0; i < 3; i++) {
+            snprintf(line, sizeof(line), "%c%s", (st->probe_menu_index == (uint8_t)i) ? '>' : ' ', probe_items[i]);
+            u8g2_DrawStr(u8g2, 2, 36 + (i * 12), line);
+        }
+    } else if (st->settings_probe_mode == 2) {
+        // Tela interna de instalacao com telemetria formatada por sonda.
+        char t_str[8];
+        char u_str[8];
+        char s_str[8];
+
+        u8g2_DrawStr(u8g2, 2, 10, "INSTALAR");
+        u8g2_DrawHLine(u8g2, 0, 12, 128);
+
+        // Fonte menor para caber T/U/S das 4 sondas em linhas separadas.
+        u8g2_SetFont(u8g2, u8g2_font_4x6_tr);
+        for (int i = 0; i < APP_PROBE_COUNT; i++) {
+            format_probe_value(t_str, sizeof(t_str), st->probes[i].has_reading, st->probes[i].temperature);
+            format_probe_value(u_str, sizeof(u_str), st->probes[i].has_reading, st->probes[i].air_humidity);
+            format_probe_value(s_str, sizeof(s_str), st->probes[i].has_reading, st->probes[i].soil_humidity);
+            snprintf(line, sizeof(line), "S%d:T:%s U:%s S:%s", i + 1, t_str, u_str, s_str);
+            u8g2_DrawStr(u8g2, 2, 22 + (i * 10), line);
+        }
+
+        u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
+        if (st->probe_install_running) {
+            u8g2_DrawStr(u8g2, 2, 60, "Instalando");
+        } else if (st->probe_install_finished) {
+            u8g2_DrawStr(u8g2, 2, 60, "Instalacao OK");
+        } else {
+            u8g2_DrawStr(u8g2, 2, 60, "Aguardando");
+        }
+    } else if (st->settings_probe_mode == 3) {
+        // Tela interna de desinstalacao com rodape fixo.
+        u8g2_DrawStr(u8g2, 2, 10, "DESINSTALAR");
+        u8g2_DrawHLine(u8g2, 0, 12, 128);
+        u8g2_DrawStr(u8g2, 2, 60, "Desinstalando");
+    } else if (st->settings_probe_mode == 4) {
+        // Lista vertical das sondas disponiveis.
+        u8g2_DrawStr(u8g2, 2, 10, "SONDAS");
+        u8g2_DrawHLine(u8g2, 0, 12, 128);
+        u8g2_DrawStr(u8g2, 2, 24, "S1");
+        u8g2_DrawStr(u8g2, 2, 36, "S2");
+        u8g2_DrawStr(u8g2, 2, 48, "S3");
+        u8g2_DrawStr(u8g2, 2, 60, "S4");
     } else {
         for (int i = 0; i < 5; i++) {
             if(st->settings_index < 4){
