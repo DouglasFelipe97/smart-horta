@@ -91,10 +91,13 @@ static void reset_probe_install_data_unlocked(void)
     s_model.probe_uninstall_cycle = 0;
 
     for (int i = 0; i < APP_PROBE_COUNT; i++) {
+        s_model.probes[i].probe_id = (uint8_t)(i + 1U);
+        s_model.probes[i].probe_type = APP_PROBE_TYPE_AIR_SOIL_TH;
         s_model.probes[i].installed = false;
         s_model.probes[i].has_reading = false;
-        s_model.probes[i].temperature = 0.0f;
+        s_model.probes[i].air_temperature = 0.0f;
         s_model.probes[i].air_humidity = 0.0f;
+        s_model.probes[i].soil_temperature = 0.0f;
         s_model.probes[i].soil_humidity = 0.0f;
     }
 }
@@ -387,6 +390,17 @@ void app_model_process_key(app_key_t key)
             if (key == APP_KEY_MENU) {
                 s_model.screen = APP_SCREEN_MENU;
                 s_model.menu_index = 0;
+            } else if (key == APP_KEY_LEFT) {
+                s_model.screen = APP_SCREEN_HOME_PROBES;
+            }
+            break;
+
+        case APP_SCREEN_HOME_PROBES:
+            if (key == APP_KEY_BACK || key == APP_KEY_LEFT) {
+                s_model.screen = APP_SCREEN_HOME;
+            } else if (key == APP_KEY_MENU) {
+                s_model.screen = APP_SCREEN_MENU;
+                s_model.menu_index = 0;
             }
             break;
 
@@ -617,10 +631,13 @@ void app_model_set_probe_uninstall_status(bool running, bool finished, uint8_t c
 }
 
 void app_model_set_probe_snapshot(uint8_t probe_slot,
+                                  uint8_t probe_id,
+                                  app_probe_type_t probe_type,
                                   bool installed,
                                   bool has_reading,
-                                  float temperature,
+                                  float air_temperature,
                                   float air_humidity,
+                                  float soil_temperature,
                                   float soil_humidity)
 {
     if (probe_slot >= APP_PROBE_COUNT) {
@@ -629,10 +646,13 @@ void app_model_set_probe_snapshot(uint8_t probe_slot,
 
     lock_model();
     // slot 0..3 mapeia para Sensor 1..4 na UI.
+    s_model.probes[probe_slot].probe_id = probe_id;
+    s_model.probes[probe_slot].probe_type = probe_type;
     s_model.probes[probe_slot].installed = installed;
     s_model.probes[probe_slot].has_reading = has_reading;
-    s_model.probes[probe_slot].temperature = temperature;
+    s_model.probes[probe_slot].air_temperature = air_temperature;
     s_model.probes[probe_slot].air_humidity = air_humidity;
+    s_model.probes[probe_slot].soil_temperature = soil_temperature;
     s_model.probes[probe_slot].soil_humidity = soil_humidity;
     unlock_model();
 }

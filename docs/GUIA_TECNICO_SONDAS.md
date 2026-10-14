@@ -9,11 +9,31 @@ Este guia descreve, em detalhe, como funciona a arquitetura da secao de sondas:
 
 ## 1. Arquitetura Geral
 
+## 0. Atualizacao de 2026-10-14
+
+Esta revisao adiciona os seguintes comportamentos solicitados para a UX de campo:
+- Cada sonda agora possui identidade explicita no modelo (`probe_id`) e tipo (`probe_type`).
+- Telemetria passou a considerar 4 grandezas por sonda:
+   - temperatura do ar
+   - umidade do ar
+   - temperatura do solo
+   - umidade do solo
+- Tela HOME foi reorganizada para mostrar:
+   - aviso de alarmes ativos no topo
+   - data/hora logo abaixo
+   - medias das leituras das sondas instaladas (ar e solo)
+- Tecla ESQUERDA na HOME abre uma tela direta de sondas instaladas.
+- Telas de Instalacao e Sondas passaram a usar fonte padrao com layout abreviado (`S1`, `S2`, ...).
+- Na Instalacao, o rodape exibe barra ciclica de progresso enquanto instala.
+   - ao finalizar todas as sondas, a barra deixa de ser renderizada.
+
 ### 1.1 Componentes
 - `app_model.c/.h`
   - Estado global thread-safe via mutex.
   - Snapshot consumido pela UI.
   - Flags de tela ativa para ligar/desligar managers.
+   - Nova tela dedicada de sondas a partir da HOME (`APP_SCREEN_HOME_PROBES`).
+   - Snapshot de sonda com `probe_id`, `probe_type`, `air_temperature`, `air_humidity`, `soil_temperature`, `soil_humidity`.
 - `probe_install.c/.h`
   - Camada de protocolo UART.
   - CRC, framing, parser.
@@ -128,17 +148,30 @@ Forcar retorno de todos os sensores para estado virgem (ID = `0xFF`) com redunda
 
 ### 5.3 Estrutura de dados local
 `ProbeData`:
-- `temp`
-- `hum`
-- `soil`
+- `air_temp`
+- `air_hum`
+- `soil_temp`
+- `soil_hum`
 - `installed`
 
 ## 6. Renderizacao da UI
 
+### 6.0 Legenda abreviada das linhas de sonda
+Para caber na resolucao 128x64 com fonte padrao:
+- `Sx`: identificador da sonda (ex.: `S1`)
+- `A`: temperatura do ar
+- `U`: umidade do ar
+- `T`: temperatura do solo
+- `S`: umidade do solo
+
+Exemplo:
+`S1 A23 U55 T21 S40`
+
 ### 6.1 Tela Instalar
-- Lista S1..S4 com T/U/S.
-- Se sem leitura: `--.-`.
-- Rodape com status de instalacao.
+- Lista `S1..S4` com `A/U/T/S` na fonte padrao.
+- Se sem leitura: `--` para cada campo.
+- Rodape com barra ciclica durante instalacao.
+- Ao concluir instalacao total (`4/4`), barra deixa de aparecer.
 
 ### 6.2 Tela Desinstalar
 - Texto fixo: `Desinstalando...`
@@ -146,11 +179,22 @@ Forcar retorno de todos os sensores para estado virgem (ID = `0xFF`) com redunda
 - Ao terminar: `Concluido` (antes do auto-retorno)
 
 ### 6.3 Tela Sondas
-- Linhas:
-  - `Sensor 1: T:xx.x U:xx.x S:xx.x`
-  - ...
+- Linhas abreviadas:
+   - `S1 Axx Uxx Txx Sxx`
+   - ...
 - Em ausencia/timeout:
-  - `Sensor N: T:__._ U:__._ S:__._`
+   - `S1 A-- U-- T-- S--`
+
+### 6.4 Tela HOME (resumo operacional)
+- Linha 1: quantidade de alarmes ativos.
+- Linha 2: data/hora.
+- Linha 3: media de temperatura/umidade do ar das sondas instaladas.
+- Linha 4: media de temperatura/umidade do solo das sondas instaladas.
+- Linha 5: dica de navegacao para abrir tela de sondas pela tecla esquerda.
+
+### 6.5 Tela HOME -> ESQUERDA
+- Ao pressionar tecla esquerda na HOME, abre tela de sondas com mesmo formato da tela `Sondas` do menu.
+- Teclas `BACK` ou `ESQUERDA` retornam para HOME.
 
 ## 7. Temporizacao e Tasking
 
@@ -200,6 +244,9 @@ Resultado:
 4. Confirmar retorno automatico para submenu apos 500 ms.
 5. Entrar em Sondas e validar alternancia valor real <-> `__._` conforme resposta/timeout.
 6. Simular ruido/desconexao e validar que UI nao trava e continua navegavel.
+7. Na HOME, validar medias somente com sondas instaladas e com leitura valida.
+8. Na HOME, pressionar ESQUERDA e confirmar abertura da tela resumida de sondas.
+9. Na Instalacao, confirmar barra ciclica durante processo e sumico da barra ao finalizar.
 
 ## 11. Diagramas de Estados (FSM)
 

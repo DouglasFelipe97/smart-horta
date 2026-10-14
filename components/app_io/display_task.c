@@ -11,6 +11,15 @@
 
 static const char *TAG_LCD = "DISPLAY_TASK";
 
+#define ALARM_AIR_TEMP_MIN_C    5.0f
+#define ALARM_AIR_TEMP_MAX_C   35.0f
+#define ALARM_AIR_HUM_MIN_PCT  20.0f
+#define ALARM_AIR_HUM_MAX_PCT  90.0f
+#define ALARM_SOIL_TEMP_MIN_C   0.0f
+#define ALARM_SOIL_TEMP_MAX_C  45.0f
+#define ALARM_SOIL_HUM_MIN_PCT 15.0f
+#define ALARM_SOIL_HUM_MAX_PCT 95.0f
+
 // -----------------------------------------------------------------------------
 // Funcoes draw_*:
 // Cada funcao desenha uma tela especifica da interface.
@@ -20,16 +29,72 @@ static const char *TAG_LCD = "DISPLAY_TASK";
 static void draw_home(u8g2_t *u8g2, const app_state_snapshot_t *st)
 {
     char line[32];
-    static const char *days_of_week[] = {"none", "Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"};   
+    uint8_t samples = 0;
+    uint8_t alarms = 0;
+    float sum_air_t = 0.0f;
+    float sum_air_u = 0.0f;
+    float sum_soil_t = 0.0f;
+    float sum_soil_u = 0.0f;
+
+    for (int i = 0; i < APP_PROBE_COUNT; i++) {
+        if (!st->probes[i].installed || !st->probes[i].has_reading) {
+            continue;
+        }
+
+        sum_air_t += st->probes[i].air_temperature;
+        sum_air_u += st->probes[i].air_humidity;
+        sum_soil_t += st->probes[i].soil_temperature;
+        sum_soil_u += st->probes[i].soil_humidity;
+        samples++;
+
+        bool probe_alarm =
+            (st->probes[i].air_temperature < ALARM_AIR_TEMP_MIN_C) ||
+            (st->probes[i].air_temperature > ALARM_AIR_TEMP_MAX_C) ||
+            (st->probes[i].air_humidity < ALARM_AIR_HUM_MIN_PCT) ||
+            (st->probes[i].air_humidity > ALARM_AIR_HUM_MAX_PCT) ||
+            (st->probes[i].soil_temperature < ALARM_SOIL_TEMP_MIN_C) ||
+            (st->probes[i].soil_temperature > ALARM_SOIL_TEMP_MAX_C) ||
+            (st->probes[i].soil_humidity < ALARM_SOIL_HUM_MIN_PCT) ||
+            (st->probes[i].soil_humidity > ALARM_SOIL_HUM_MAX_PCT);
+
+        if (probe_alarm) {
+            alarms++;
+        }
+    }
 
     u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
 
-    snprintf(line, sizeof(line), "%s %02u/%02u/%04u", days_of_week[st->datetime.weekday], st->datetime.day, st->datetime.month, st->datetime.year);
-    u8g2_DrawStr(u8g2, 3, 10, line);
+    if (alarms > 0U) {
+        snprintf(line, sizeof(line), "ALARMES ATIVOS: %u", alarms);
+    } else {
+        snprintf(line, sizeof(line), "Alarmes ativos: 0");
+    }
+    u8g2_DrawStr(u8g2, 2, 10, line);
 
-    snprintf(line, sizeof(line), "%02u:%02u", st->datetime.hour, st->datetime.minute);
-    u8g2_DrawStr(u8g2, 92, 10, line);
+    snprintf(line, sizeof(line), "%02u/%02u/%04u %02u:%02u",
+             st->datetime.day,
+             st->datetime.month,
+             st->datetime.year,
+             st->datetime.hour,
+             st->datetime.minute);
+    u8g2_DrawStr(u8g2, 2, 22, line);
 
+    if (samples > 0U) {
+        snprintf(line, sizeof(line), "Ar  T:%4.1f U:%4.1f",
+                 sum_air_t / (float)samples,
+                 sum_air_u / (float)samples);
+        u8g2_DrawStr(u8g2, 2, 36, line);
+
+        snprintf(line, sizeof(line), "Solo T:%4.1f U:%4.1f",
+                 sum_soil_t / (float)samples,
+                 sum_soil_u / (float)samples);
+        u8g2_DrawStr(u8g2, 2, 50, line);
+    } else {
+        u8g2_DrawStr(u8g2, 2, 36, "Ar  T:--.- U:--.-");
+        u8g2_DrawStr(u8g2, 2, 50, "Solo T:--.- U:--.-");
+    }
+
+    u8g2_DrawStr(u8g2, 2, 62, "< esquerda: Sondas");
 }
 
 static void draw_main_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
@@ -59,11 +124,61 @@ static void draw_placeholder_screen(u8g2_t *u8g2, const char *title)
 static void format_probe_value(char *out, size_t out_len, bool has_value, float value)
 {
     if (!has_value) {
-        snprintf(out, out_len, "--.-");
+        snprintf(out, out_len, "--");
         return;
     }
 
-    snprintf(out, out_len, "%4.1f", value);
+    snprintf(out, out_len, "%2.0f", value);
+}
+
+static void draw_install_progress_indicator(u8g2_t *u8g2)
+{
+    static uint8_t phase = 0;
+    const uint8_t segments = 12;
+    const uint8_t active_window = 3;
+    const uint8_t bar_x = 2;
+    const uint8_t bar_y = 60;
+    const uint8_t bar_w = 124;
+    const uint8_t bar_h = 3;
+
+    u8g2_DrawFrame(u8g2, bar_x, bar_y, bar_w, bar_h);
+    for (uint8_t i = 0; i < segments; i++) {
+        uint8_t wrapped = (uint8_t)((i + segments - phase) % segments);
+        if (wrapped < active_window) {
+            uint8_t seg_x = (uint8_t)(bar_x + 1U + (i * 10U));
+            u8g2_DrawBox(u8g2, seg_x, (uint8_t)(bar_y + 1U), 8, 1);
+        }
+    }
+
+    phase = (uint8_t)((phase + 1U) % segments);
+}
+
+static void draw_probe_rows(u8g2_t *u8g2, const app_state_snapshot_t *st)
+{
+    char line[32];
+    char a_t[4];
+    char a_u[4];
+    char s_t[4];
+    char s_u[4];
+
+    // Abreviacoes para caber com fonte padrao: A/U (ar), T/S (solo).
+    for (int i = 0; i < APP_PROBE_COUNT; i++) {
+        bool has_data = st->probes[i].installed && st->probes[i].has_reading;
+        format_probe_value(a_t, sizeof(a_t), has_data, st->probes[i].air_temperature);
+        format_probe_value(a_u, sizeof(a_u), has_data, st->probes[i].air_humidity);
+        format_probe_value(s_t, sizeof(s_t), has_data, st->probes[i].soil_temperature);
+        format_probe_value(s_u, sizeof(s_u), has_data, st->probes[i].soil_humidity);
+
+        snprintf(line,
+                 sizeof(line),
+                 "S%u A%s U%s T%s S%s",
+                 (unsigned)st->probes[i].probe_id,
+                 a_t,
+                 a_u,
+                 s_t,
+                 s_u);
+        u8g2_DrawStr(u8g2, 2, 24 + (i * 12), line);
+    }
 }
 
 static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
@@ -141,31 +256,17 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
             u8g2_DrawStr(u8g2, 2, 36 + (i * 12), line);
         }
     } else if (st->settings_probe_mode == 2) {
-        // Tela interna de instalacao com telemetria formatada por sonda.
-        char t_str[8];
-        char u_str[8];
-        char s_str[8];
-
-        u8g2_DrawStr(u8g2, 2, 10, "INSTALAR");
+        u8g2_DrawStr(u8g2, 2, 10, "INSTALAR SONDAS");
         u8g2_DrawHLine(u8g2, 0, 12, 128);
 
-        // Fonte menor para caber T/U/S das 4 sondas em linhas separadas.
-        u8g2_SetFont(u8g2, u8g2_font_4x6_tr);
-        for (int i = 0; i < APP_PROBE_COUNT; i++) {
-            format_probe_value(t_str, sizeof(t_str), st->probes[i].has_reading, st->probes[i].temperature);
-            format_probe_value(u_str, sizeof(u_str), st->probes[i].has_reading, st->probes[i].air_humidity);
-            format_probe_value(s_str, sizeof(s_str), st->probes[i].has_reading, st->probes[i].soil_humidity);
-            snprintf(line, sizeof(line), "S%d:T:%s U:%s S:%s", i + 1, t_str, u_str, s_str);
-            u8g2_DrawStr(u8g2, 2, 22 + (i * 10), line);
-        }
-
-        u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
+        draw_probe_rows(u8g2, st);
         if (st->probe_install_running) {
-            u8g2_DrawStr(u8g2, 2, 60, "Instalando");
+            draw_install_progress_indicator(u8g2);
         } else if (st->probe_install_finished) {
-            u8g2_DrawStr(u8g2, 2, 60, "Instalacao OK");
+            snprintf(line, sizeof(line), "Sondas instaladas: %u/4", st->probe_install_completed_count);
+            u8g2_DrawStr(u8g2, 2, 60, line);
         } else {
-            u8g2_DrawStr(u8g2, 2, 60, "Aguardando");
+            u8g2_DrawStr(u8g2, 2, 60, "Aguardando inicio");
         }
     } else if (st->settings_probe_mode == 3) {
         // Tela interna de desinstalacao com status fixo e progresso de ciclos.
@@ -185,36 +286,9 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
         }
         u8g2_DrawStr(u8g2, 2, 60, "Desinstalando...");
     } else if (st->settings_probe_mode == 4) {
-        // Tela "Sondas": leitura ciclica em tempo real por sensor.
-        // A task de monitoramento UART atualiza st->probes[] em background.
-        // Esta tela apenas consome snapshot pronto e renderiza.
-        char t_str[8];
-        char u_str[8];
-        char s_str[8];
-
         u8g2_DrawStr(u8g2, 2, 10, "SONDAS");
         u8g2_DrawHLine(u8g2, 0, 12, 128);
-
-        u8g2_SetFont(u8g2, u8g2_font_4x6_tr);
-        for (int i = 0; i < APP_PROBE_COUNT; i++) {
-            if (st->probes[i].installed && st->probes[i].has_reading) {
-                // Sensor ativo com leitura valida no ultimo ciclo de polling.
-                snprintf(t_str, sizeof(t_str), "%4.1f", st->probes[i].temperature);
-                snprintf(u_str, sizeof(u_str), "%4.1f", st->probes[i].air_humidity);
-                snprintf(s_str, sizeof(s_str), "%4.1f", st->probes[i].soil_humidity);
-            } else {
-                // Sensor ausente/sem resposta: mantemos mascara fixa para
-                // facilitar leitura visual da grade sem "pular" alinhamento.
-                snprintf(t_str, sizeof(t_str), "__._");
-                snprintf(u_str, sizeof(u_str), "__._");
-                snprintf(s_str, sizeof(s_str), "__._");
-            }
-
-            snprintf(line, sizeof(line), "Sensor %d: T:%s U:%s S:%s", i + 1, t_str, u_str, s_str);
-            u8g2_DrawStr(u8g2, 2, 22 + (i * 10), line);
-        }
-
-        u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
+        draw_probe_rows(u8g2, st);
     } else {
         for (int i = 0; i < 5; i++) {
             if(st->settings_index < 4){
@@ -248,6 +322,12 @@ static void draw_screen(u8g2_t *u8g2, const app_state_snapshot_t *st)
     switch (st->screen) {
         case APP_SCREEN_HOME:
             draw_home(u8g2, st);
+            break;
+        case APP_SCREEN_HOME_PROBES:
+            u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
+            u8g2_DrawStr(u8g2, 2, 10, "SONDAS INSTALADAS");
+            u8g2_DrawHLine(u8g2, 0, 12, 128);
+            draw_probe_rows(u8g2, st);
             break;
         case APP_SCREEN_MENU:
             draw_main_menu(u8g2, st);

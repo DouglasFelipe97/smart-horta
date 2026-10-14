@@ -33,8 +33,9 @@ void send_probe_assignment(uint8_t id);
 // Retorna true se payload contem telemetria valida para preenchimento da UI.
 bool process_probe_response(const uint8_t *payload,
                             size_t payload_len,
-                            float *temperature,
+                            float *air_temperature,
                             float *air_humidity,
+                            float *soil_temperature,
                             float *soil_humidity);
 
 // Executa a sequencia de desinstalacao em ciclos sem bloquear a task chamadora.

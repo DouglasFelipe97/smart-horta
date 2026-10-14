@@ -9,6 +9,7 @@
 // Telas principais da aplicacao.
 typedef enum {
     APP_SCREEN_HOME = 0,
+    APP_SCREEN_HOME_PROBES,
     APP_SCREEN_MENU,
     APP_SCREEN_MENU_SETTINGS,
     APP_SCREEN_MENU_REPORTS,
@@ -29,6 +30,11 @@ typedef enum {
     APP_KEY_MENU,
 } app_key_t;
 
+typedef enum {
+    APP_PROBE_TYPE_UNKNOWN = 0,
+    APP_PROBE_TYPE_AIR_SOIL_TH = 1,
+} app_probe_type_t;
+
 // Data/hora usada no app e no modulo RTC DS3231.
 typedef struct {
     uint16_t year;
@@ -47,10 +53,13 @@ typedef struct {
 // has_reading: indica se os campos T/U/S carregam leitura valida neste ciclo.
 //              Quando falso, a UI exibe placeholder (__._) para os tres valores.
 typedef struct {
+    uint8_t probe_id;
+    app_probe_type_t probe_type;
     bool installed;
     bool has_reading;
-    float temperature;
+    float air_temperature;
     float air_humidity;
+    float soil_temperature;
     float soil_humidity;
 } app_probe_snapshot_t;
 
@@ -128,10 +137,13 @@ void app_model_set_probe_uninstall_status(bool running, bool finished, uint8_t c
 
 // Atualiza telemetria/estado de uma sonda (slot 0..3 para S1..S4).
 void app_model_set_probe_snapshot(uint8_t probe_slot,
+                                  uint8_t probe_id,
+                                  app_probe_type_t probe_type,
                                   bool installed,
                                   bool has_reading,
-                                  float temperature,
+                                  float air_temperature,
                                   float air_humidity,
+                                  float soil_temperature,
                                   float soil_humidity);
 
 // Reseta placeholders e status da rotina de instalacao/desinstalacao para inicio limpo.

@@ -89,9 +89,10 @@ typedef struct {
 // Estrutura de buffer local para monitoramento da tela "Sondas".
 // O campo "installed" define se a UI deve exibir valores reais ou mascara.
 typedef struct {
-    float temp;
-    float hum;
-    float soil;
+    float air_temp;
+    float air_hum;
+    float soil_temp;
+    float soil_hum;
     bool installed;
 } ProbeData;
 
@@ -332,30 +333,42 @@ static void send_probe_read_request(uint8_t id)
 
 bool process_probe_response(const uint8_t *payload,
                             size_t payload_len,
-                            float *temperature,
+                            float *air_temperature,
                             float *air_humidity,
+                            float *soil_temperature,
                             float *soil_humidity)
 {
     // Hook/stub: protocolo de telemetria pode variar conforme firmware da sonda.
-    // Layout esperado nesta implementacao: temp_x10(int16), umid_ar_x10(uint16), umid_solo_x10(uint16).
+    // Layout esperado nesta implementacao: t_ar_x10(int16), u_ar_x10(uint16),
+    // t_solo_x10(int16), u_solo_x10(uint16). Se t_solo nao vier, replica t_ar.
     if (payload == NULL || payload_len < 6U) {
         return false;
     }
 
-    int16_t t_x10 = (int16_t)((uint16_t)payload[0] | (uint16_t)(payload[1] << 8U));
-    uint16_t u_x10 = (uint16_t)payload[2] | (uint16_t)(payload[3] << 8U);
-    uint16_t s_x10 = (uint16_t)payload[4] | (uint16_t)(payload[5] << 8U);
+    int16_t t_air_x10 = (int16_t)((uint16_t)payload[0] | (uint16_t)(payload[1] << 8U));
+    uint16_t u_air_x10 = (uint16_t)payload[2] | (uint16_t)(payload[3] << 8U);
+    int16_t t_soil_x10 = t_air_x10;
+    uint16_t u_soil_x10 = (uint16_t)payload[4] | (uint16_t)(payload[5] << 8U);
 
-    if (temperature != NULL) {
-        *temperature = (float)t_x10 / 10.0f;
+    if (payload_len >= 8U) {
+        t_soil_x10 = (int16_t)((uint16_t)payload[4] | (uint16_t)(payload[5] << 8U));
+        u_soil_x10 = (uint16_t)payload[6] | (uint16_t)(payload[7] << 8U);
+    }
+
+    if (air_temperature != NULL) {
+        *air_temperature = (float)t_air_x10 / 10.0f;
     }
 
     if (air_humidity != NULL) {
-        *air_humidity = (float)u_x10 / 10.0f;
+        *air_humidity = (float)u_air_x10 / 10.0f;
+    }
+
+    if (soil_temperature != NULL) {
+        *soil_temperature = (float)t_soil_x10 / 10.0f;
     }
 
     if (soil_humidity != NULL) {
-        *soil_humidity = (float)s_x10 / 10.0f;
+        *soil_humidity = (float)u_soil_x10 / 10.0f;
     }
 
     return true;
@@ -402,10 +415,19 @@ void probe_monitor_manager_set_active(bool active)
         // Tela Sondas inicia com mascara para todos os canais ate receber respostas.
         for (int i = 0; i < APP_PROBE_COUNT; i++) {
             s_probe_monitor.data[i].installed = false;
-            s_probe_monitor.data[i].temp = 0.0f;
-            s_probe_monitor.data[i].hum = 0.0f;
-            s_probe_monitor.data[i].soil = 0.0f;
-            app_model_set_probe_snapshot((uint8_t)i, false, false, 0.0f, 0.0f, 0.0f);
+            s_probe_monitor.data[i].air_temp = 0.0f;
+            s_probe_monitor.data[i].air_hum = 0.0f;
+            s_probe_monitor.data[i].soil_temp = 0.0f;
+            s_probe_monitor.data[i].soil_hum = 0.0f;
+            app_model_set_probe_snapshot((uint8_t)i,
+                                         (uint8_t)(i + 1U),
+                                         APP_PROBE_TYPE_AIR_SOIL_TH,
+                                         false,
+                                         false,
+                                         0.0f,
+                                         0.0f,
+                                         0.0f,
+                                         0.0f);
         }
     } else if (!active && s_probe_monitor.active) {
         // Saiu da tela "Sondas": pausa polling para liberar barramento UART.
@@ -510,14 +532,23 @@ void probe_install_manager_periodic(uint32_t now_ms)
                 return;
             }
 
-            float t = 0.0f;
-            float u = 0.0f;
-            float s = 0.0f;
-            bool has_telemetry = process_probe_response(payload, payload_len, &t, &u, &s);
+            float t_air = 0.0f;
+            float u_air = 0.0f;
+            float t_soil = 0.0f;
+            float u_soil = 0.0f;
+            bool has_telemetry = process_probe_response(payload, payload_len, &t_air, &u_air, &t_soil, &u_soil);
 
             uint8_t slot = (uint8_t)(s_probe_state.current_id - 1U);
             // Atualiza UI com leituras da sonda que acabou de ser instalada.
-            app_model_set_probe_snapshot(slot, true, has_telemetry, t, u, s);
+            app_model_set_probe_snapshot(slot,
+                                         s_probe_state.current_id,
+                                         APP_PROBE_TYPE_AIR_SOIL_TH,
+                                         true,
+                                         has_telemetry,
+                                         t_air,
+                                         u_air,
+                                         t_soil,
+                                         u_soil);
 
             s_probe_state.completed_count++;
             app_model_set_probe_install_status(true, false, s_probe_state.completed_count);
@@ -594,17 +625,27 @@ void probe_monitor_manager_periodic(uint32_t now_ms)
                                 (rx_id == s_probe_monitor.current_id);
 
         if (matched_response) {
-            float t = 0.0f;
-            float u = 0.0f;
-            float s = 0.0f;
+            float t_air = 0.0f;
+            float u_air = 0.0f;
+            float t_soil = 0.0f;
+            float u_soil = 0.0f;
 
-            if (process_probe_response(payload, payload_len, &t, &u, &s)) {
+            if (process_probe_response(payload, payload_len, &t_air, &u_air, &t_soil, &u_soil)) {
                 uint8_t slot = (uint8_t)(s_probe_monitor.current_id - 1U);
                 s_probe_monitor.data[slot].installed = true;
-                s_probe_monitor.data[slot].temp = t;
-                s_probe_monitor.data[slot].hum = u;
-                s_probe_monitor.data[slot].soil = s;
-                app_model_set_probe_snapshot(slot, true, true, t, u, s);
+                s_probe_monitor.data[slot].air_temp = t_air;
+                s_probe_monitor.data[slot].air_hum = u_air;
+                s_probe_monitor.data[slot].soil_temp = t_soil;
+                s_probe_monitor.data[slot].soil_hum = u_soil;
+                app_model_set_probe_snapshot(slot,
+                                             s_probe_monitor.current_id,
+                                             APP_PROBE_TYPE_AIR_SOIL_TH,
+                                             true,
+                                             true,
+                                             t_air,
+                                             u_air,
+                                             t_soil,
+                                             u_soil);
             }
 
             if (s_probe_monitor.current_id < PROBE_MAX_ID) {
@@ -621,7 +662,15 @@ void probe_monitor_manager_periodic(uint32_t now_ms)
             // Timeout do sensor atual: marca canal ausente para UI mostrar __._
             uint8_t slot = (uint8_t)(s_probe_monitor.current_id - 1U);
             s_probe_monitor.data[slot].installed = false;
-            app_model_set_probe_snapshot(slot, false, false, 0.0f, 0.0f, 0.0f);
+            app_model_set_probe_snapshot(slot,
+                                         s_probe_monitor.current_id,
+                                         APP_PROBE_TYPE_AIR_SOIL_TH,
+                                         false,
+                                         false,
+                                         0.0f,
+                                         0.0f,
+                                         0.0f,
+                                         0.0f);
 
             if (s_probe_monitor.current_id < PROBE_MAX_ID) {
                 s_probe_monitor.current_id++;
