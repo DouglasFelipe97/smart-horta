@@ -91,6 +91,8 @@ static void reset_probe_install_data_unlocked(void)
     s_model.probe_uninstall_cycle = 0;
 
     for (int i = 0; i < APP_PROBE_COUNT; i++) {
+        // Mantemos ID/tipo estaveis no reset para a UI sempre saber
+        // qual linha representa cada slot de sonda.
         s_model.probes[i].probe_id = (uint8_t)(i + 1U);
         s_model.probes[i].probe_type = APP_PROBE_TYPE_AIR_SOIL_TH;
         s_model.probes[i].installed = false;
@@ -391,11 +393,13 @@ void app_model_process_key(app_key_t key)
                 s_model.screen = APP_SCREEN_MENU;
                 s_model.menu_index = 0;
             } else if (key == APP_KEY_LEFT) {
+                // Atalho operacional: HOME -> lista resumida de sondas.
                 s_model.screen = APP_SCREEN_HOME_PROBES;
             }
             break;
 
         case APP_SCREEN_HOME_PROBES:
+            // BACK/LEFT retornam para HOME sem passar pelos menus.
             if (key == APP_KEY_BACK || key == APP_KEY_LEFT) {
                 s_model.screen = APP_SCREEN_HOME;
             } else if (key == APP_KEY_MENU) {
@@ -646,6 +650,8 @@ void app_model_set_probe_snapshot(uint8_t probe_slot,
 
     lock_model();
     // slot 0..3 mapeia para Sensor 1..4 na UI.
+    // O par probe_id/probe_type identifica o dispositivo e seu perfil
+    // para suportar coexistencia de novos tipos de sonda no futuro.
     s_model.probes[probe_slot].probe_id = probe_id;
     s_model.probes[probe_slot].probe_type = probe_type;
     s_model.probes[probe_slot].installed = installed;

@@ -31,6 +31,8 @@ void send_probe_assignment(uint8_t id);
 
 // Hook/stub para decodificar payload de resposta quando protocolo estiver definido.
 // Retorna true se payload contem telemetria valida para preenchimento da UI.
+// Nesta revisao, o parser atende sonda tipo APP_PROBE_TYPE_AIR_SOIL_TH
+// (temperatura/umidade de ar + temperatura/umidade de solo).
 bool process_probe_response(const uint8_t *payload,
                             size_t payload_len,
                             float *air_temperature,

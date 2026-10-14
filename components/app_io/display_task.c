@@ -11,6 +11,8 @@
 
 static const char *TAG_LCD = "DISPLAY_TASK";
 
+// Limiares locais de alarme usados no resumo da HOME.
+// Podem migrar para configuracao de usuario em revisao futura.
 #define ALARM_AIR_TEMP_MIN_C    5.0f
 #define ALARM_AIR_TEMP_MAX_C   35.0f
 #define ALARM_AIR_HUM_MIN_PCT  20.0f
@@ -36,6 +38,8 @@ static void draw_home(u8g2_t *u8g2, const app_state_snapshot_t *st)
     float sum_soil_t = 0.0f;
     float sum_soil_u = 0.0f;
 
+    // HOME considera apenas sondas instaladas com leitura valida
+    // para compor medias e contagem de alarmes ativos.
     for (int i = 0; i < APP_PROBE_COUNT; i++) {
         if (!st->probes[i].installed || !st->probes[i].has_reading) {
             continue;
@@ -141,6 +145,7 @@ static void draw_install_progress_indicator(u8g2_t *u8g2)
     const uint8_t bar_w = 124;
     const uint8_t bar_h = 3;
 
+    // Barra ciclica: janela de segmentos "acesos" caminhando no tempo.
     u8g2_DrawFrame(u8g2, bar_x, bar_y, bar_w, bar_h);
     for (uint8_t i = 0; i < segments; i++) {
         uint8_t wrapped = (uint8_t)((i + segments - phase) % segments);
@@ -162,6 +167,7 @@ static void draw_probe_rows(u8g2_t *u8g2, const app_state_snapshot_t *st)
     char s_u[4];
 
     // Abreviacoes para caber com fonte padrao: A/U (ar), T/S (solo).
+    // Exemplo: S1 A23 U55 T21 S40.
     for (int i = 0; i < APP_PROBE_COUNT; i++) {
         bool has_data = st->probes[i].installed && st->probes[i].has_reading;
         format_probe_value(a_t, sizeof(a_t), has_data, st->probes[i].air_temperature);
@@ -261,8 +267,10 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
 
         draw_probe_rows(u8g2, st);
         if (st->probe_install_running) {
+            // Durante instalacao ativa, mostra progresso visual ciclico.
             draw_install_progress_indicator(u8g2);
         } else if (st->probe_install_finished) {
+            // Ao finalizar 4/4, barra some e entra status final.
             snprintf(line, sizeof(line), "Sondas instaladas: %u/4", st->probe_install_completed_count);
             u8g2_DrawStr(u8g2, 2, 60, line);
         } else {
@@ -324,6 +332,7 @@ static void draw_screen(u8g2_t *u8g2, const app_state_snapshot_t *st)
             draw_home(u8g2, st);
             break;
         case APP_SCREEN_HOME_PROBES:
+            // Tela espelho de sondas acessada pela tecla esquerda na HOME.
             u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
             u8g2_DrawStr(u8g2, 2, 10, "SONDAS INSTALADAS");
             u8g2_DrawHLine(u8g2, 0, 12, 128);

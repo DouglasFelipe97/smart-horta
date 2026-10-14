@@ -27,6 +27,22 @@ Esta revisao adiciona os seguintes comportamentos solicitados para a UX de campo
 - Na Instalacao, o rodape exibe barra ciclica de progresso enquanto instala.
    - ao finalizar todas as sondas, a barra deixa de ser renderizada.
 
+## 0.1 Tipos de sonda (estado atual)
+
+O modelo agora explicita o tipo de cada sonda via `probe_type`, permitindo que a
+mesma arquitetura suporte novos sensores sem quebrar as telas existentes.
+
+Mapa atual de tipos:
+- `APP_PROBE_TYPE_UNKNOWN (0)`
+   - fallback para dados sem classificacao.
+- `APP_PROBE_TYPE_AIR_SOIL_TH (1)`
+   - perfil atual em producao.
+   - leituras: temperatura do ar, umidade do ar, temperatura do solo, umidade do solo.
+
+Campos de identidade por sonda no snapshot:
+- `probe_id`: identifica a sonda no barramento (faixa atual 1..4).
+- `probe_type`: identifica o perfil funcional da sonda.
+
 ### 1.1 Componentes
 - `app_model.c/.h`
   - Estado global thread-safe via mutex.
@@ -130,7 +146,7 @@ Forcar retorno de todos os sensores para estado virgem (ID = `0xFF`) com redunda
 2. FSM em `PROBE_MONITOR_SEND` envia leitura para ID atual.
 3. FSM muda para `PROBE_MONITOR_WAIT_RESPONSE`.
 4. Se resposta valida (reg e ID correspondentes):
-   - parse de payload em T/U/S
+   - parse de payload em A/U/T/S (ar e solo)
    - atualiza `ProbeData` e snapshot do modelo
 5. Se timeout (`100 ms`):
    - marca sensor como ausente

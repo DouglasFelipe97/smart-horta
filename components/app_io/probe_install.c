@@ -350,6 +350,7 @@ bool process_probe_response(const uint8_t *payload,
     int16_t t_soil_x10 = t_air_x10;
     uint16_t u_soil_x10 = (uint16_t)payload[4] | (uint16_t)(payload[5] << 8U);
 
+    // Novo layout (8 bytes): inclui temperatura de solo dedicada.
     if (payload_len >= 8U) {
         t_soil_x10 = (int16_t)((uint16_t)payload[4] | (uint16_t)(payload[5] << 8U));
         u_soil_x10 = (uint16_t)payload[6] | (uint16_t)(payload[7] << 8U);
@@ -421,6 +422,7 @@ void probe_monitor_manager_set_active(bool active)
             s_probe_monitor.data[i].soil_hum = 0.0f;
             app_model_set_probe_snapshot((uint8_t)i,
                                          (uint8_t)(i + 1U),
+                                         // Tipo atual unico do projeto (TH ar/solo).
                                          APP_PROBE_TYPE_AIR_SOIL_TH,
                                          false,
                                          false,
@@ -542,6 +544,7 @@ void probe_install_manager_periodic(uint32_t now_ms)
             // Atualiza UI com leituras da sonda que acabou de ser instalada.
             app_model_set_probe_snapshot(slot,
                                          s_probe_state.current_id,
+                                         // Instalacao tambem publica tipo para o snapshot.
                                          APP_PROBE_TYPE_AIR_SOIL_TH,
                                          true,
                                          has_telemetry,
@@ -639,6 +642,7 @@ void probe_monitor_manager_periodic(uint32_t now_ms)
                 s_probe_monitor.data[slot].soil_hum = u_soil;
                 app_model_set_probe_snapshot(slot,
                                              s_probe_monitor.current_id,
+                                             // Polling preserva metadado de tipo por sonda.
                                              APP_PROBE_TYPE_AIR_SOIL_TH,
                                              true,
                                              true,

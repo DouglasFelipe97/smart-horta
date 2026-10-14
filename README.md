@@ -18,6 +18,18 @@ Cada sonda instalada fornece:
 As sondas sao tratadas como dispositivos identificaveis (ID), permitindo crescimento futuro
 para novos tipos de sonda no mesmo ecossistema.
 
+## Tipos de Sonda
+
+O firmware ja trabalha com identificacao de tipo por sonda (`probe_type`) no snapshot.
+
+Tipos atuais no codigo:
+- `APP_PROBE_TYPE_UNKNOWN (0)`: tipo nao identificado.
+- `APP_PROBE_TYPE_AIR_SOIL_TH (1)`: sonda de temperatura/umidade de ar e solo.
+
+Cada slot de sonda tambem carrega:
+- `probe_id`: identificador logico no barramento (1..4 na versao atual).
+- `probe_type`: perfil funcional da sonda para suportar expansao futura.
+
 ## Funcionalidades
 
 - Interface grafica no display ST7920 (128x64) via u8g2.

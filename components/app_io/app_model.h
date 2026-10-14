@@ -9,6 +9,7 @@
 // Telas principais da aplicacao.
 typedef enum {
     APP_SCREEN_HOME = 0,
+    // Tela de acesso rapido por tecla esquerda na HOME.
     APP_SCREEN_HOME_PROBES,
     APP_SCREEN_MENU,
     APP_SCREEN_MENU_SETTINGS,
@@ -32,6 +33,7 @@ typedef enum {
 
 typedef enum {
     APP_PROBE_TYPE_UNKNOWN = 0,
+    // Sonda atual do projeto: temperatura/umidade de ar + solo.
     APP_PROBE_TYPE_AIR_SOIL_TH = 1,
 } app_probe_type_t;
 
@@ -53,10 +55,13 @@ typedef struct {
 // has_reading: indica se os campos T/U/S carregam leitura valida neste ciclo.
 //              Quando falso, a UI exibe placeholder (__._) para os tres valores.
 typedef struct {
+    // ID logico da sonda no barramento (1..4 nesta versao).
     uint8_t probe_id;
+    // Tipo funcional da sonda para suportar novos modelos no futuro.
     app_probe_type_t probe_type;
     bool installed;
     bool has_reading;
+    // Leituras separadas por meio (ar e solo).
     float air_temperature;
     float air_humidity;
     float soil_temperature;
@@ -136,6 +141,7 @@ void app_model_set_probe_install_status(bool running, bool finished, uint8_t com
 void app_model_set_probe_uninstall_status(bool running, bool finished, uint8_t cycle);
 
 // Atualiza telemetria/estado de uma sonda (slot 0..3 para S1..S4).
+// probe_id/probe_type permitem rastrear o dispositivo fisico e seu perfil.
 void app_model_set_probe_snapshot(uint8_t probe_slot,
                                   uint8_t probe_id,
                                   app_probe_type_t probe_type,
