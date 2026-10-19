@@ -17,10 +17,6 @@
 #define APP_IN_1_PIN            GPIO_NUM_34
 #define APP_IN_2_PIN            GPIO_NUM_35
 
-//OUTPUTS
-#define APP_OUT_1_PIN            GPIO_NUM_32
-#define APP_OUT_2_PIN            GPIO_NUM_33
-
 // LEDs
 #define APP_LED_1_PIN            GPIO_NUM_15
 #define APP_LED_2_PIN            GPIO_NUM_2
@@ -44,6 +40,9 @@
 #define APP_RTC_I2C_SDA_PIN      GPIO_NUM_21
 #define APP_RTC_I2C_SCL_PIN      GPIO_NUM_22
 #define APP_RTC_I2C_FREQ_HZ      100000
+
+// PCF8574 no mesmo barramento I2C do RTC. Ajuste conforme A0-A2 do modulo.
+#define APP_PCF8574_I2C_ADDR     0x20
 
 // ------------------------------
 // Memoria flash AT25SF321B (SPI)
@@ -76,8 +75,6 @@
 #define APP_PWM_FREQUENCY_HZ     2000
 #define APP_PWM_MAX_DUTY         ((1U << 10) - 1U)
 
-// Inicializa GPIOs de saida para LEDs.
-void app_configure_gpio_outputs(void);
 void app_configure_gpio_inputs(void);
 
 void app_configure_gpio_leds(void);

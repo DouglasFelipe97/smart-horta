@@ -1,17 +1,5 @@
 #include "app_pin_config.h"
 
-void app_configure_gpio_outputs(void){
-    /*Configuraqndo saidas de uso geral*/
-    gpio_config_t out_config = {
-        .pin_bit_mask = (1ULL << APP_OUT_1_PIN) | (1ULL << APP_OUT_2_PIN),
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&out_config);
-}
-
 void app_configure_gpio_inputs(void){
     /*Configuraqndo entradas de uso geral*/
     gpio_config_t in_config = {
@@ -103,7 +91,6 @@ esp_err_t app_configure_rtc_i2c(void)
 }
 
 void app_config_pins(void){
-    app_configure_gpio_outputs();
     app_configure_gpio_inputs();
     app_configure_gpio_leds();
     app_configure_gpio_buzzer();

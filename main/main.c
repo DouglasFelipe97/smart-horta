@@ -6,6 +6,7 @@
 #include "io_task.h"
 #include "display_task.h"
 #include "app_pin_config.h"
+#include "app_pcf8574.h"
 #include "rtc_task.h"
 #include "app_storage.h"
 #include "app_lot_store.h"
@@ -48,6 +49,11 @@ void app_main(void)
     esp_err_t rtc_i2c_err = app_configure_rtc_i2c();
     if (rtc_i2c_err != ESP_OK) {
         ESP_LOGE(TAG_MAIN, "Falha ao configurar I2C do RTC: %s", esp_err_to_name(rtc_i2c_err));
+    } else {
+        esp_err_t pcf8574_err = app_pcf8574_init();
+        if (pcf8574_err != ESP_OK) {
+            ESP_LOGE(TAG_MAIN, "Falha ao inicializar PCF8574: %s", esp_err_to_name(pcf8574_err));
+        }
     }
 
     // Inicializa a AT25SF321B e cria a task que serializa operacoes na flash.
