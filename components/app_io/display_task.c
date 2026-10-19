@@ -17,8 +17,6 @@ static const char *TAG_LCD = "DISPLAY_TASK";
 #define ALARM_AIR_TEMP_MAX_C   35.0f
 #define ALARM_AIR_HUM_MIN_PCT  20.0f
 #define ALARM_AIR_HUM_MAX_PCT  90.0f
-#define ALARM_SOIL_TEMP_MIN_C   0.0f
-#define ALARM_SOIL_TEMP_MAX_C  45.0f
 #define ALARM_SOIL_HUM_MIN_PCT 15.0f
 #define ALARM_SOIL_HUM_MAX_PCT 95.0f
 
@@ -56,8 +54,6 @@ static void draw_home(u8g2_t *u8g2, const app_state_snapshot_t *st)
             (st->probes[i].air_temperature > ALARM_AIR_TEMP_MAX_C) ||
             (st->probes[i].air_humidity < ALARM_AIR_HUM_MIN_PCT) ||
             (st->probes[i].air_humidity > ALARM_AIR_HUM_MAX_PCT) ||
-            (st->probes[i].soil_temperature < ALARM_SOIL_TEMP_MIN_C) ||
-            (st->probes[i].soil_temperature > ALARM_SOIL_TEMP_MAX_C) ||
             (st->probes[i].soil_humidity < ALARM_SOIL_HUM_MIN_PCT) ||
             (st->probes[i].soil_humidity > ALARM_SOIL_HUM_MAX_PCT);
 
@@ -68,6 +64,9 @@ static void draw_home(u8g2_t *u8g2, const app_state_snapshot_t *st)
 
     u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
 
+    if (st->ambience_alarm_active) {
+        alarms++;
+    }
     if (alarms > 0U) {
         snprintf(line, sizeof(line), "ALARMES ATIVOS: %u", alarms);
     } else {
@@ -195,14 +194,23 @@ static void draw_probe_rows(u8g2_t *u8g2, const app_state_snapshot_t *st)
 
 static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
 {
-    static const char *items[] = {"Lote", "Data", "Temperaturas", "Buzzer", "Umidade", "Instalar Sondas"};
-    static const char *temp_items[] = {"Curvas", "Offset"};
+    static const char *items[] = {"Lote", "Data", "Ambiencia", "Buzzer", "Instalar Sondas"};
+    static const char *ambience_fields[] = {
+        "Idade dias", "Temp ar", "Umid ar", "Temp solo",
+        "Umid solo", "Aspersores", "Irrigadores", "Exaustores"
+    };
     static const char *buzzer_items[] = {"Habilitar", "Desabilitar"};
     static const char *probe_items[] = {"Instalar", "Desinstalar", "Sondas"};
     char line[64];
+    const char *title = st->settings_lot_mode != APP_LOT_MODE_NONE
+        ? "LOTE"
+        : (st->ambience_mode != APP_AMBIENCE_MODE_NONE ? "AMBIENCIA" : "AJUSTES");
 
     u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
-    u8g2_DrawStr(u8g2, 2, 10, st->settings_lot_mode == APP_LOT_MODE_NONE ? "AJUSTES" : "LOTE");
+    u8g2_DrawStr(u8g2, 2, 10, title);
+    if (!st->ambience_alarm_active && st->ambience_mode != APP_AMBIENCE_MODE_NONE) {
+        u8g2_DrawStr(u8g2, 100, 10, st->ambience_configured ? "ON" : "OFF");
+    }
     u8g2_DrawHLine(u8g2, 0, 12, 128);
 
     if (st->settings_editing_datetime) {
@@ -279,22 +287,62 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
         u8g2_DrawStr(u8g2, 2, 24, "LOTE FINALIZADO");
         u8g2_DrawStr(u8g2, 2, 40, "Idade: 0 dias");
         u8g2_DrawStr(u8g2, 2, 62, "OK/BACK: voltar");
-    } else if (st->settings_temperature_mode == 1) {
-        u8g2_DrawStr(u8g2, 2, 22, "> Temperaturas");
-        for (int i = 0; i < 2; i++) {
-            snprintf(line, sizeof(line), "%c%s", (st->temperature_index == (uint8_t)i) ? '>' : ' ', temp_items[i]);
-            u8g2_DrawStr(u8g2, 2, 36 + (i * 12), line);
+    } else if (st->ambience_mode == APP_AMBIENCE_MODE_CURVE_LIST) {
+        uint8_t first_visible = st->ambience_curve_index > 3U
+            ? (uint8_t)(st->ambience_curve_index - 3U)
+            : 0U;
+        for (uint8_t row = 0; row < 4U && first_visible + row < APP_AMBIENCE_CURVE_COUNT; row++) {
+            uint8_t i = (uint8_t)(first_visible + row);
+            snprintf(line, sizeof(line), "%cC%u  Idade: %u d",
+                     st->ambience_curve_index == i ? '>' : ' ',
+                     (unsigned)(i + 1U),
+                     (unsigned)st->ambience_curves[i].age_days);
+            u8g2_DrawStr(u8g2, 2, 23 + (row * 9), line);
         }
-    } else if (st->settings_temperature_mode == 2) {
-        u8g2_DrawStr(u8g2, 2, 22, "> Temperaturas");
-        u8g2_DrawStr(u8g2, 2, 34, "Curvas");
-        u8g2_DrawStr(u8g2, 2, 46, "Em desenvolvimento");
-        u8g2_DrawStr(u8g2, 2, 58, "BACK = voltar");
-    } else if (st->settings_temperature_mode == 3) {
-        u8g2_DrawStr(u8g2, 2, 22, "> Temperaturas");
-        u8g2_DrawStr(u8g2, 2, 34, "Offset");
-        u8g2_DrawStr(u8g2, 2, 46, "Em desenvolvimento");
-        u8g2_DrawStr(u8g2, 2, 58, "BACK = voltar");
+        u8g2_DrawStr(u8g2, 2, 61, "ENT edita BACK ativa");
+    } else if (st->ambience_mode == APP_AMBIENCE_MODE_EDIT_CURVE) {
+        const app_ambience_curve_t *curve = &st->ambience_curves[st->ambience_curve_index];
+        snprintf(line, sizeof(line), "Curva %u/5  Campo %u/8",
+                 (unsigned)(st->ambience_curve_index + 1U),
+                 (unsigned)(st->ambience_field_index + 1U));
+        u8g2_DrawStr(u8g2, 2, 25, line);
+        snprintf(line, sizeof(line), "%s:", ambience_fields[st->ambience_field_index]);
+        u8g2_DrawStr(u8g2, 2, 39, line);
+
+        switch (st->ambience_field_index) {
+            case 0:
+                snprintf(line, sizeof(line), "%u dias", (unsigned)curve->age_days);
+                break;
+            case 1:
+            case 3: {
+                int16_t temperature = st->ambience_field_index == 1U
+                    ? curve->air_temperature_x10
+                    : curve->soil_temperature_x10;
+                if (temperature < 0) {
+                    snprintf(line, sizeof(line), "-%d.%d C", -temperature / 10, -temperature % 10);
+                } else {
+                    snprintf(line, sizeof(line), "%d.%d C", temperature / 10, temperature % 10);
+                }
+                break;
+            }
+            case 2:
+                snprintf(line, sizeof(line), "%u %%", (unsigned)curve->air_humidity_percent);
+                break;
+            case 4:
+                snprintf(line, sizeof(line), "%u %%", (unsigned)curve->soil_humidity_percent);
+                break;
+            case 5:
+                snprintf(line, sizeof(line), "%u", (unsigned)curve->sprinkler_count);
+                break;
+            case 6:
+                snprintf(line, sizeof(line), "%u", (unsigned)curve->irrigator_count);
+                break;
+            default:
+                snprintf(line, sizeof(line), "%u", (unsigned)curve->exhaust_fan_count);
+                break;
+        }
+        u8g2_DrawStr(u8g2, 2, 52, line);
+        u8g2_DrawStr(u8g2, 2, 62, "UP/DN muda  ENT prox");
     } else if (st->settings_buzzer_mode == 1) {
         u8g2_DrawStr(u8g2, 2, 22, "> Buzzer");
         for (int i = 0; i < 2; i++) {
@@ -350,7 +398,7 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
         uint8_t first_visible = st->settings_index > 3U
             ? (uint8_t)(st->settings_index - 3U)
             : 0U;
-        for (uint8_t row = 0; row < 4U && first_visible + row < 6U; row++) {
+        for (uint8_t row = 0; row < 4U && first_visible + row < 5U; row++) {
             uint8_t item_index = (uint8_t)(first_visible + row);
             snprintf(line, sizeof(line), "%c%s",
                      st->settings_index == item_index ? '>' : ' ', items[item_index]);
@@ -500,6 +548,10 @@ void display_task(void *pvParameters)
 
         // Moldura para facilitar visualizacao durante depuracao.
         u8g2_DrawFrame(&u8g2, 0, 0, 128, 64);
+        if (snapshot.ambience_alarm_active) {
+            u8g2_DrawFrame(&u8g2, 116, 1, 11, 11);
+            u8g2_DrawStr(&u8g2, 119, 10, "!");
+        }
 
         u8g2_SendBuffer(&u8g2);
 

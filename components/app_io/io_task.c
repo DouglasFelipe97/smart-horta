@@ -8,6 +8,7 @@
 #include "esp_log.h"
 #include "app_pin_config.h"
 #include "app_model.h"
+#include "app_ambience_control.h"
 #include "app_lot_store.h"
 // #include "app_menu_functions"
 #include "keyboard.h"
@@ -21,6 +22,8 @@ void io_task(void *pvParameters){
     // Marcadores de tempo (em ms) para tarefas periodicas.
     uint32_t last_led_toggle_ms = 0;
     uint32_t last_buzzer_toggle_ms = 0;
+    uint32_t last_alarm_toggle_ms = 0;
+    bool alarm_buzzer_state = false;
 
     // Inicializa UART e estado do instalador de sondas.
     probe_install_manager_init();
@@ -36,11 +39,26 @@ void io_task(void *pvParameters){
             gpio_set_level(APP_LED_1_PIN, led_state ? 1 : 0);
             gpio_set_level(APP_LED_2_PIN, led_state ? 0 : 1);
         }
+        // O alarme ambiental tem prioridade sobre o beep de navegacao.
+        app_state_snapshot_t ambience_snapshot;
+        app_model_get_snapshot(&ambience_snapshot);
+        if (ambience_snapshot.ambience_alarm_active) {
+            if (now_ms - last_alarm_toggle_ms >= 500U) {
+                last_alarm_toggle_ms = now_ms;
+                alarm_buzzer_state = !alarm_buzzer_state;
+                gpio_set_level(APP_BUZZER_PIN, alarm_buzzer_state ? 1 : 0);
+            }
+        } else {
+            alarm_buzzer_state = false;
+            gpio_set_level(APP_BUZZER_PIN, 0);
+        }
+
         // Beep unico por tecla estavel:
         // - adc_task marca um flag quando uma tecla valida e reconhecida.
         // - aqui consumimos o flag apenas uma vez e, se habilitado no menu,
         //   geramos um pulso curto no buzzer.
-        if (app_model_take_key_press_flag()) {
+        bool key_press_pending = app_model_take_key_press_flag();
+        if (!ambience_snapshot.ambience_alarm_active && key_press_pending) {
             if (app_model_is_key_beep_enabled() && (now_ms - last_buzzer_toggle_ms >= 100U)) {
                 last_buzzer_toggle_ms = now_ms;
 
@@ -58,12 +76,20 @@ void io_task(void *pvParameters){
         //
         // Como o loop roda a cada ~50ms, este e o "relogio" base das FSMs.
         // Cada FSM aplica seus proprios timeouts internos (100ms, 500ms, 1200ms etc.).
-        probe_install_manager_set_active(app_model_is_probe_install_screen_active());
-        probe_uninstall_manager_set_active(app_model_is_probe_uninstall_screen_active());
-        probe_monitor_manager_set_active(app_model_is_probe_list_screen_active());
+        bool install_screen_active = app_model_is_probe_install_screen_active();
+        bool uninstall_screen_active = app_model_is_probe_uninstall_screen_active();
+        bool monitor_active = app_model_is_probe_list_screen_active() ||
+            (ambience_snapshot.lot_status == APP_LOT_STATUS_ACTIVE &&
+             !install_screen_active && !uninstall_screen_active);
+        probe_install_manager_set_active(install_screen_active);
+        probe_uninstall_manager_set_active(uninstall_screen_active);
+        probe_monitor_manager_set_active(monitor_active);
         probe_install_manager_periodic(now_ms);
         run_uninstall_sequence(now_ms);
         probe_monitor_manager_periodic(now_ms);
+
+        app_model_get_snapshot(&ambience_snapshot);
+        app_ambience_control_update(&ambience_snapshot, now_ms, monitor_active);
 
         app_datetime_t lot_start_datetime;
         bool lot_started;

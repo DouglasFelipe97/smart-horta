@@ -43,6 +43,7 @@
 
 // PCF8574 no mesmo barramento I2C do RTC. Ajuste conforme A0-A2 do modulo.
 #define APP_PCF8574_I2C_ADDR     0x20
+#define APP_PCF8574_ACTIVE_HIGH  1
 
 // ------------------------------
 // Memoria flash AT25SF321B (SPI)

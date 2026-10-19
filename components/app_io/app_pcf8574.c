@@ -21,7 +21,7 @@ esp_err_t app_pcf8574_init(void)
         }
     }
 
-    const uint8_t initial_levels = 0xFFU;
+    const uint8_t initial_levels = APP_PCF8574_ACTIVE_HIGH ? 0x80U : 0xFFU;
     esp_err_t err = i2c_master_write_to_device(
         APP_RTC_I2C_PORT,
         APP_PCF8574_I2C_ADDR,

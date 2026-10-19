@@ -10,6 +10,7 @@
 #include "rtc_task.h"
 #include "app_storage.h"
 #include "app_lot_store.h"
+#include "app_ambience_store.h"
 
 // Mesma prioridade para as duas tasks, conforme solicitado.
 #define APP_ADC_TASK_PRIORITY     6
@@ -21,6 +22,7 @@
 #define ADC_TASK_STACK        2048
 #define RTC_READ_TASK_STACK   3072
 #define RTC_WRITE_TASK_STACK  3072
+#define AMBIENCE_STORE_TASK_STACK 3072
 
 static const char *TAG_MAIN = "APP_MAIN";
 
@@ -70,6 +72,17 @@ void app_main(void)
             ESP_LOGW(TAG_MAIN, "Registro do lote invalido ou inacessivel: %s",
                      esp_err_to_name(lot_load_err));
         }
+
+        app_ambience_curve_t ambience_curves[APP_AMBIENCE_CURVE_COUNT];
+        bool ambience_configured = false;
+        esp_err_t ambience_load_err = app_ambience_store_load(ambience_curves, &ambience_configured);
+        if (ambience_load_err == ESP_OK) {
+            app_model_set_ambience_curves(ambience_curves, ambience_configured);
+            ESP_LOGI(TAG_MAIN, "Curvas de ambiencia restauradas da flash");
+        } else if (ambience_load_err != ESP_ERR_NOT_FOUND) {
+            ESP_LOGW(TAG_MAIN, "Configuracao de ambiencia invalida ou inacessivel: %s",
+                     esp_err_to_name(ambience_load_err));
+        }
     }
 
     // // Configura PWM para o buzzer.
@@ -103,6 +116,19 @@ void app_main(void)
     );
     if (io_created != pdPASS) {
         ESP_LOGE(TAG_MAIN, "Falha ao criar io_task");
+    }
+    if (storage_err == ESP_OK) {
+        BaseType_t ambience_store_created = xTaskCreate(
+            app_ambience_store_task,
+            "ambience_store_task",
+            AMBIENCE_STORE_TASK_STACK,
+            NULL,
+            APP_TASK_PRIORITY,
+            NULL
+        );
+        if (ambience_store_created != pdPASS) {
+            ESP_LOGE(TAG_MAIN, "Falha ao criar ambience_store_task");
+        }
     }
     // Task do display: responsavel apenas por desenhar telas.
     BaseType_t display_created = xTaskCreate(

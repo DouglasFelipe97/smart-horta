@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #define APP_PROBE_COUNT 4
+#define APP_AMBIENCE_CURVE_COUNT 5
 
 // Telas principais da aplicacao.
 typedef enum {
@@ -34,6 +35,23 @@ typedef enum {
     APP_LOT_STATUS_SCHEDULED,
     APP_LOT_STATUS_ACTIVE,
 } app_lot_status_t;
+
+typedef enum {
+    APP_AMBIENCE_MODE_NONE = 0,
+    APP_AMBIENCE_MODE_CURVE_LIST,
+    APP_AMBIENCE_MODE_EDIT_CURVE,
+} app_ambience_mode_t;
+
+typedef struct {
+    uint16_t age_days;
+    int16_t air_temperature_x10;
+    uint8_t air_humidity_percent;
+    int16_t soil_temperature_x10;
+    uint8_t soil_humidity_percent;
+    uint8_t sprinkler_count;
+    uint8_t irrigator_count;
+    uint8_t exhaust_fan_count;
+} app_ambience_curve_t;
 
 // Teclas lidas via teclado resistivo no ADC.
 typedef enum {
@@ -93,8 +111,12 @@ typedef struct {
     uint8_t settings_index;
     app_lot_mode_t settings_lot_mode;
     bool settings_editing_datetime;
-    uint8_t settings_temperature_mode;
-    uint8_t temperature_index;
+    app_ambience_mode_t ambience_mode;
+    uint8_t ambience_curve_index;
+    uint8_t ambience_field_index;
+    app_ambience_curve_t ambience_curves[APP_AMBIENCE_CURVE_COUNT];
+    bool ambience_configured;
+    bool ambience_alarm_active;
     uint8_t settings_buzzer_mode;
     uint8_t buzzer_index;
     uint8_t settings_probe_mode;
@@ -177,6 +199,13 @@ void app_model_set_probe_snapshot(uint8_t probe_slot,
                                   float air_humidity,
                                   float soil_temperature,
                                   float soil_humidity);
+
+void app_model_set_ambience_curves(const app_ambience_curve_t curves[APP_AMBIENCE_CURVE_COUNT],
+                                   bool configured);
+bool app_model_take_ambience_write_request(app_ambience_curve_t curves[APP_AMBIENCE_CURVE_COUNT],
+                                          bool *configured);
+void app_model_request_ambience_write(void);
+void app_model_set_ambience_alarm_active(bool active);
 
 // Reseta placeholders e status da rotina de instalacao/desinstalacao para inicio limpo.
 // Esta funcao e chamada na entrada dos fluxos para evitar reuso de dados antigos.

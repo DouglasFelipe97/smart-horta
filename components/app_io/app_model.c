@@ -13,8 +13,15 @@ typedef struct {
     app_datetime_t lot_start_datetime;
     app_datetime_t edit_lot_datetime;
     bool settings_editing_datetime;
-    uint8_t settings_temperature_mode;
-    uint8_t temperature_index;
+    app_ambience_mode_t ambience_mode;
+    uint8_t ambience_curve_index;
+    uint8_t ambience_field_index;
+    app_ambience_curve_t ambience_curves[APP_AMBIENCE_CURVE_COUNT];
+    bool ambience_configured;
+    bool ambience_edit_session_dirty;
+    bool ambience_alarm_active;
+    bool ambience_write_pending;
+    uint32_t ambience_last_edit_ms;
     uint8_t settings_buzzer_mode;
     uint8_t buzzer_index;
     uint8_t settings_probe_mode;
@@ -43,17 +50,13 @@ static app_model_data_t s_model;            //Criando uma estrutura nova
 static SemaphoreHandle_t s_model_mutex;     //Criando semaforo para usar o mutex
 
 #define APP_MAIN_MENU_ITEMS      3
-#define APP_SETTINGS_MENU_ITEMS  6
-#define APP_TEMPERATURE_MENU_ITEMS 2
+#define APP_SETTINGS_MENU_ITEMS  5
 #define APP_BUZZER_MENU_ITEMS    2
 #define APP_PROBE_MENU_ITEMS     3
+#define APP_AMBIENCE_CURVE_FIELDS 8
+#define APP_AMBIENCE_SAVE_DEBOUNCE_MS 1500U
 #define APP_DATE_FIELDS          6
 #define APP_LOT_DATE_FIELDS      5
-
-#define APP_TEMPERATURE_MODE_NONE    0
-#define APP_TEMPERATURE_MODE_MENU    1
-#define APP_TEMPERATURE_MODE_CURVES  2
-#define APP_TEMPERATURE_MODE_OFFSET  3
 
 #define APP_BUZZER_MODE_NONE     0
 #define APP_BUZZER_MODE_MENU     1
@@ -80,9 +83,98 @@ static void reset_settings_submenus(void)
 {
     s_model.settings_lot_mode = APP_LOT_MODE_NONE;
     s_model.settings_editing_datetime = false;
-    s_model.settings_temperature_mode = APP_TEMPERATURE_MODE_NONE;
+    s_model.ambience_mode = APP_AMBIENCE_MODE_NONE;
     s_model.settings_buzzer_mode = APP_BUZZER_MODE_NONE;
     s_model.settings_probe_mode = APP_PROBE_MODE_NONE;
+}
+
+static bool adjust_ambience_field_unlocked(bool increase)
+{
+    app_ambience_curve_t *curve = &s_model.ambience_curves[s_model.ambience_curve_index];
+    bool changed = false;
+
+    switch (s_model.ambience_field_index) {
+        case 0:
+            if (increase && curve->age_days < 999U &&
+                (s_model.ambience_curve_index + 1U >= APP_AMBIENCE_CURVE_COUNT ||
+                 curve->age_days + 1U < s_model.ambience_curves[s_model.ambience_curve_index + 1U].age_days)) {
+                curve->age_days++;
+                changed = true;
+            } else if (!increase && curve->age_days >
+                       (s_model.ambience_curve_index == 0U ? 0U :
+                        s_model.ambience_curves[s_model.ambience_curve_index - 1U].age_days + 1U)) {
+                curve->age_days--;
+                changed = true;
+            }
+            break;
+        case 1:
+            if (increase && curve->air_temperature_x10 < 600) {
+                curve->air_temperature_x10 += 5;
+                changed = true;
+            } else if (!increase && curve->air_temperature_x10 > -100) {
+                curve->air_temperature_x10 -= 5;
+                changed = true;
+            }
+            break;
+        case 2:
+            if (increase && curve->air_humidity_percent < 100U) {
+                curve->air_humidity_percent++;
+                changed = true;
+            } else if (!increase && curve->air_humidity_percent > 0U) {
+                curve->air_humidity_percent--;
+                changed = true;
+            }
+            break;
+        case 3:
+            if (increase && curve->soil_temperature_x10 < 600) {
+                curve->soil_temperature_x10 += 5;
+                changed = true;
+            } else if (!increase && curve->soil_temperature_x10 > -100) {
+                curve->soil_temperature_x10 -= 5;
+                changed = true;
+            }
+            break;
+        case 4:
+            if (increase && curve->soil_humidity_percent < 100U) {
+                curve->soil_humidity_percent++;
+                changed = true;
+            } else if (!increase && curve->soil_humidity_percent > 0U) {
+                curve->soil_humidity_percent--;
+                changed = true;
+            }
+            break;
+        case 5:
+            if (increase && curve->sprinkler_count < 2U) {
+                curve->sprinkler_count++;
+                changed = true;
+            } else if (!increase && curve->sprinkler_count > 0U) {
+                curve->sprinkler_count--;
+                changed = true;
+            }
+            break;
+        case 6:
+            if (increase && curve->irrigator_count < 2U) {
+                curve->irrigator_count++;
+                changed = true;
+            } else if (!increase && curve->irrigator_count > 0U) {
+                curve->irrigator_count--;
+                changed = true;
+            }
+            break;
+        case 7:
+            if (increase && curve->exhaust_fan_count < 2U) {
+                curve->exhaust_fan_count++;
+                changed = true;
+            } else if (!increase && curve->exhaust_fan_count > 0U) {
+                curve->exhaust_fan_count--;
+                changed = true;
+            }
+            break;
+        default:
+            break;
+    }
+
+    return changed;
 }
 
 static void reset_probe_install_data_unlocked(void)
@@ -291,8 +383,12 @@ void app_model_init(void)
     s_model.menu_index = 0;
     s_model.settings_index = 0;
     s_model.settings_editing_datetime = false;
-    s_model.settings_temperature_mode = APP_TEMPERATURE_MODE_NONE;
-    s_model.temperature_index = 0;
+    s_model.ambience_mode = APP_AMBIENCE_MODE_NONE;
+    s_model.ambience_curve_index = 0;
+    s_model.ambience_field_index = 0;
+    for (uint8_t i = 0; i < APP_AMBIENCE_CURVE_COUNT; i++) {
+        s_model.ambience_curves[i].age_days = (uint16_t)(i * 7U);
+    }
     s_model.settings_buzzer_mode = APP_BUZZER_MODE_NONE;
     s_model.buzzer_index = 0;
     s_model.settings_probe_mode = APP_PROBE_MODE_NONE;
@@ -416,8 +512,13 @@ void app_model_get_snapshot(app_state_snapshot_t *snapshot)
     snapshot->settings_index = s_model.settings_index;
     snapshot->settings_lot_mode = s_model.settings_lot_mode;
     snapshot->settings_editing_datetime = s_model.settings_editing_datetime;
-    snapshot->settings_temperature_mode = s_model.settings_temperature_mode;
-    snapshot->temperature_index = s_model.temperature_index;
+    snapshot->ambience_mode = s_model.ambience_mode;
+    snapshot->ambience_curve_index = s_model.ambience_curve_index;
+    snapshot->ambience_field_index = s_model.ambience_field_index;
+    memcpy(snapshot->ambience_curves, s_model.ambience_curves,
+           sizeof(snapshot->ambience_curves));
+        snapshot->ambience_configured = s_model.ambience_configured;
+    snapshot->ambience_alarm_active = s_model.ambience_alarm_active;
     snapshot->settings_buzzer_mode = s_model.settings_buzzer_mode;
     snapshot->buzzer_index = s_model.buzzer_index;
     snapshot->settings_probe_mode = s_model.settings_probe_mode;
@@ -576,22 +677,39 @@ void app_model_process_key(app_key_t key)
                            (key == APP_KEY_ENTER || key == APP_KEY_BACK)) {
                     s_model.settings_lot_mode = APP_LOT_MODE_MENU;
                 }
-            } else if (s_model.settings_temperature_mode == APP_TEMPERATURE_MODE_MENU) {
+            } else if (s_model.ambience_mode == APP_AMBIENCE_MODE_CURVE_LIST) {
                 if (key == APP_KEY_UP) {
-                    s_model.temperature_index = (s_model.temperature_index + APP_TEMPERATURE_MENU_ITEMS - 1U) % APP_TEMPERATURE_MENU_ITEMS;
+                    s_model.ambience_curve_index = (s_model.ambience_curve_index + APP_AMBIENCE_CURVE_COUNT - 1U) % APP_AMBIENCE_CURVE_COUNT;
                 } else if (key == APP_KEY_DOWN) {
-                    s_model.temperature_index = (s_model.temperature_index + 1U) % APP_TEMPERATURE_MENU_ITEMS;
+                    s_model.ambience_curve_index = (s_model.ambience_curve_index + 1U) % APP_AMBIENCE_CURVE_COUNT;
                 } else if (key == APP_KEY_ENTER) {
-                    s_model.settings_temperature_mode = (s_model.temperature_index == 0U)
-                        ? APP_TEMPERATURE_MODE_CURVES
-                        : APP_TEMPERATURE_MODE_OFFSET;
+                    s_model.ambience_mode = APP_AMBIENCE_MODE_EDIT_CURVE;
+                    s_model.ambience_field_index = 0;
                 } else if (key == APP_KEY_BACK) {
-                    s_model.settings_temperature_mode = APP_TEMPERATURE_MODE_NONE;
+                    if (s_model.ambience_edit_session_dirty) {
+                        s_model.ambience_configured = true;
+                        s_model.ambience_write_pending = true;
+                        s_model.ambience_last_edit_ms = s_model.last_user_interaction_ms;
+                    }
+                    s_model.ambience_mode = APP_AMBIENCE_MODE_NONE;
                 }
-            } else if (s_model.settings_temperature_mode == APP_TEMPERATURE_MODE_CURVES ||
-                       s_model.settings_temperature_mode == APP_TEMPERATURE_MODE_OFFSET) {
-                if (key == APP_KEY_BACK) {
-                    s_model.settings_temperature_mode = APP_TEMPERATURE_MODE_MENU;
+            } else if (s_model.ambience_mode == APP_AMBIENCE_MODE_EDIT_CURVE) {
+                if (key == APP_KEY_UP) {
+                    if (adjust_ambience_field_unlocked(true)) {
+                        s_model.ambience_edit_session_dirty = true;
+                        s_model.ambience_write_pending = true;
+                        s_model.ambience_last_edit_ms = s_model.last_user_interaction_ms;
+                    }
+                } else if (key == APP_KEY_DOWN) {
+                    if (adjust_ambience_field_unlocked(false)) {
+                        s_model.ambience_edit_session_dirty = true;
+                        s_model.ambience_write_pending = true;
+                        s_model.ambience_last_edit_ms = s_model.last_user_interaction_ms;
+                    }
+                } else if (key == APP_KEY_ENTER) {
+                    s_model.ambience_field_index = (uint8_t)((s_model.ambience_field_index + 1U) % APP_AMBIENCE_CURVE_FIELDS);
+                } else if (key == APP_KEY_BACK) {
+                    s_model.ambience_mode = APP_AMBIENCE_MODE_CURVE_LIST;
                 }
             } else if (s_model.settings_buzzer_mode == APP_BUZZER_MODE_MENU) {
                 if (key == APP_KEY_UP) {
@@ -648,15 +766,16 @@ void app_model_process_key(app_key_t key)
                         s_model.datetime_field_index = 0;
                         s_model.edit_datetime = s_model.datetime;
                     } else if (s_model.settings_index == 2U) {
-                        s_model.settings_temperature_mode = APP_TEMPERATURE_MODE_MENU;
-                        s_model.temperature_index = 0;
-                    } else if (s_model.settings_index == 3U) {
-                        s_model.settings_buzzer_mode = APP_BUZZER_MODE_MENU;
-                        s_model.buzzer_index = s_model.key_beep_enabled ? 0U : 1U;
-                    } else if (s_model.settings_index == 5U) {
+                        s_model.ambience_mode = APP_AMBIENCE_MODE_CURVE_LIST;
+                        s_model.ambience_curve_index = 0;
+                        s_model.ambience_edit_session_dirty = false;
+                    } else if (s_model.settings_index == 4U) {
                         // Entra no gerenciador de sondas a partir de Ajustes.
                         s_model.settings_probe_mode = APP_PROBE_MODE_MENU;
                         s_model.probe_menu_index = 0;
+                    } else if (s_model.settings_index == 3U) {
+                        s_model.settings_buzzer_mode = APP_BUZZER_MODE_MENU;
+                        s_model.buzzer_index = s_model.key_beep_enabled ? 0U : 1U;
                     }
                 }
             }
@@ -813,6 +932,57 @@ void app_model_exit_probe_uninstall_to_menu(void)
         s_model.settings_probe_mode == APP_PROBE_MODE_UNINSTALL) {
         s_model.settings_probe_mode = APP_PROBE_MODE_MENU;
     }
+    unlock_model();
+}
+
+void app_model_set_ambience_curves(const app_ambience_curve_t curves[APP_AMBIENCE_CURVE_COUNT],
+                                   bool configured)
+{
+    if (curves == NULL) {
+        return;
+    }
+
+    lock_model();
+    memcpy(s_model.ambience_curves, curves, sizeof(s_model.ambience_curves));
+    s_model.ambience_configured = configured;
+    s_model.ambience_edit_session_dirty = false;
+    s_model.ambience_write_pending = false;
+    unlock_model();
+}
+
+bool app_model_take_ambience_write_request(app_ambience_curve_t curves[APP_AMBIENCE_CURVE_COUNT],
+                                           bool *configured)
+{
+    if (curves == NULL || configured == NULL) {
+        return false;
+    }
+
+    bool has_request = false;
+    lock_model();
+    uint32_t now_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+    if (s_model.ambience_write_pending &&
+        now_ms - s_model.ambience_last_edit_ms >= APP_AMBIENCE_SAVE_DEBOUNCE_MS) {
+        memcpy(curves, s_model.ambience_curves, sizeof(s_model.ambience_curves));
+        *configured = s_model.ambience_configured;
+        s_model.ambience_write_pending = false;
+        has_request = true;
+    }
+    unlock_model();
+    return has_request;
+}
+
+void app_model_request_ambience_write(void)
+{
+    lock_model();
+    s_model.ambience_write_pending = true;
+    s_model.ambience_last_edit_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+    unlock_model();
+}
+
+void app_model_set_ambience_alarm_active(bool active)
+{
+    lock_model();
+    s_model.ambience_alarm_active = active;
     unlock_model();
 }
 

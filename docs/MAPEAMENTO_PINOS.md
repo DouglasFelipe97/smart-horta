@@ -36,6 +36,7 @@ Fonte de verdade: components/app_io/app_pin_config.h
 | APP_RTC_I2C_PORT | I2C_NUM_0 | Barramento | Porta I2C usada |
 | APP_RTC_I2C_FREQ_HZ | 100000 | Configuracao | 100 kHz |
 | APP_PCF8574_I2C_ADDR | 0x20 | Endereco I2C | Ajustar conforme A0-A2 do modulo |
+| APP_PCF8574_ACTIVE_HIGH | 1 | Polaridade | HIGH aciona; LOW desliga |
 
 | Canal PCF8574 | Equipamento |
 |---|---|
@@ -50,11 +51,22 @@ Fonte de verdade: components/app_io/app_pin_config.h
 
 O PCF8574 usa o mesmo barramento I2C do RTC. O endereco padrao e 0x20
 (ajustavel em `app_pin_config.h` conforme A0-A2, faixa 0x20 a 0x27).
-As escritas da API representam nivel eletrico (HIGH/LOW), nao estado
-ligado/desligado; a polaridade ativa depende do modulo de acionamento. Na
-inicializacao, as oito linhas sao escritas em HIGH, estado de power-on usual.
+As escritas da API representam nivel eletrico (HIGH/LOW). A inicializacao
+mantem P0-P6 em LOW (inativos para acionamento ativo HIGH) e P7 em HIGH.
 Use estagio de acionamento apropriado (rele/transistor); nao conecte cargas
 diretamente aos pinos do PCF8574.
+
+### Controle de ambiencia
+
+As metas de temperatura e umidade sao interpoladas linearmente entre as idades
+das curvas; as contagens de saidas usam o ponto mais recente ja atingido. Com
+lote ativo, temperatura do ar acima da meta +5 C, umidade do ar fora da faixa
+meta +/-5%, ou umidade do solo abaixo da meta -5% inicia alarme imediato. Apos
+30 s, sao acionadas as saidas configuradas para a condicao: exaustores para
+temperatura alta ou umidade do ar alta, aspersores para umidade do ar baixa e
+irrigadores para umidade do solo baixa. Cada grau/ponto percentual adicional
+aciona a proxima saida, limitado a quantidade configurada. A recuperacao usa
+histerese de 1 C/1%; a temperatura do solo e apenas informativa.
 
 ## Memoria flash AT25SF321B (SPI2)
 
@@ -71,9 +83,14 @@ restricoes da placa antes de conectar; os defines ficam em `app_pin_config.h`.
 ## Registro persistente do lote
 
 A AT25SF321B possui 4 MiB. O ultimo setor de 4 KiB, no endereco `0x3FF000`, fica
-reservado para data/hora de inicio e flag do lote. O registro usa versao e CRC;
-ao finalizar o lote, esse setor e apagado. Os demais setores permanecem disponiveis
-para futuras configuracoes e relatorios.
+reservado para data/hora de inicio e flag do lote. O penultimo setor, em
+`0x3FE000`, armazena as cinco curvas de ambiencia com versao e CRC. Ao finalizar
+o lote, somente o setor `0x3FF000` e apagado; os demais setores permanecem
+disponiveis para futuras configuracoes e relatorios.
+As alteracoes das curvas sao gravadas apos 1,5 s sem edicao; as idades iniciais
+sao 0, 7, 14, 21 e 28 dias e devem permanecer em ordem crescente. A automacao
+so e habilitada depois de editar uma curva e usar BACK na lista de curvas; o
+estado ON/OFF tambem e persistido.
 
 ## Sondas RS-485 (MAX485)
 
