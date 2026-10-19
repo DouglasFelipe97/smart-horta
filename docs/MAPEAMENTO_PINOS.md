@@ -43,6 +43,14 @@ Fonte de verdade: components/app_io/app_pin_config.h
 | APP_RTC_I2C_PORT | I2C_NUM_0 | Barramento | Porta I2C usada |
 | APP_RTC_I2C_FREQ_HZ | 100000 | Configuracao | 100 kHz |
 
+## Sondas RS-485 (MAX485)
+
+| Sinal | GPIO | Direcao | Observacao |
+|---|---:|---|---|
+| UART TX | 17 | Saida | UART1 para o MAX485 |
+| UART RX | 16 | Entrada | UART1 para o MAX485 |
+| RE/DE | 4 (D4) | Saida | HIGH transmite; LOW recebe |
+
 ## Teclado Analogico (ADC)
 
 | Sinal | Canal | GPIO | Observacao |

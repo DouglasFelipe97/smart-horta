@@ -19,6 +19,7 @@
 #define PROBE_UART_BAUDRATE        9600
 #define PROBE_UART_TX_PIN          GPIO_NUM_17
 #define PROBE_UART_RX_PIN          GPIO_NUM_16
+#define PROBE_UART_RE_DE_PIN       GPIO_NUM_4
 #define PROBE_UART_RX_BUFFER_SIZE  256
 
 #define PROBE_FRAME_DELIMITER      0x55
@@ -116,6 +117,36 @@ static probe_install_state_t s_probe_state;
 static probe_uninstall_state_t s_uninstall_state;
 static probe_monitor_state_t s_probe_monitor;
 static bool s_uart_initialized = false;
+
+static bool uart_write_probe_bytes(const uint8_t *buf, size_t len)
+{
+    if (buf == NULL || len == 0U || !s_uart_initialized) {
+        return false;
+    }
+
+    esp_err_t err = gpio_set_level(PROBE_UART_RE_DE_PIN, 1);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Falha ao habilitar transmissao RS-485: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    int written = uart_write_bytes(PROBE_UART_PORT, (const char *)buf, len);
+    if (written < 0 || (size_t)written != len) {
+        ESP_LOGE(TAG, "Falha ao escrever frame UART: %d de %u bytes", written, (unsigned)len);
+    }
+
+    err = uart_wait_tx_done(PROBE_UART_PORT, portMAX_DELAY);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Falha aguardando fim da transmissao UART: %s", esp_err_to_name(err));
+    }
+
+    esp_err_t rx_err = gpio_set_level(PROBE_UART_RE_DE_PIN, 0);
+    if (rx_err != ESP_OK) {
+        ESP_LOGE(TAG, "Falha ao habilitar recepcao RS-485: %s", esp_err_to_name(rx_err));
+    }
+
+    return written >= 0 && (size_t)written == len && err == ESP_OK && rx_err == ESP_OK;
+}
 
 // CRC16 Modbus para proteger frame contra ruido no barramento.
 static uint16_t crc16_modbus(const uint8_t *data, size_t len)
@@ -252,6 +283,12 @@ static bool uart_read_probe_frame(uint8_t *buf, size_t buf_size, size_t *out_len
         return false;
     }
 
+    esp_err_t err = gpio_set_level(PROBE_UART_RE_DE_PIN, 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Falha ao habilitar recepcao RS-485: %s", esp_err_to_name(err));
+        return false;
+    }
+
     int read_len = uart_read_bytes(PROBE_UART_PORT, buf, buf_size, 0);
     if (read_len < PROBE_FRAME_TX_SIZE) {
         return false;
@@ -289,7 +326,7 @@ void send_probe_discovery(void)
         return;
     }
 
-    uart_write_bytes(PROBE_UART_PORT, (const char *)tx_frame, tx_len);
+    uart_write_probe_bytes(tx_frame, tx_len);
 }
 
 void send_probe_assignment(uint8_t id)
@@ -301,7 +338,7 @@ void send_probe_assignment(uint8_t id)
         return;
     }
 
-    uart_write_bytes(PROBE_UART_PORT, (const char *)tx_frame, tx_len);
+    uart_write_probe_bytes(tx_frame, tx_len);
 }
 
 // Envia frame de desinstalacao para o alvo corrente, gravando ID 0xFF.
@@ -315,7 +352,7 @@ static void send_probe_uninstall(uint8_t target_id)
 
     // Direciona transmissao para o alvo corrente (S1..S4) antes de gravar 0xFF.
     select_probe_target_address(target_id);
-    uart_write_bytes(PROBE_UART_PORT, (const char *)tx_frame, tx_len);
+    uart_write_probe_bytes(tx_frame, tx_len);
 }
 
 // Requisita telemetria de um ID especifico (registrador de leitura).
@@ -328,7 +365,7 @@ static void send_probe_read_request(uint8_t id)
         return;
     }
 
-    uart_write_bytes(PROBE_UART_PORT, (const char *)tx_frame, tx_len);
+    uart_write_probe_bytes(tx_frame, tx_len);
 }
 
 bool process_probe_response(const uint8_t *payload,
@@ -381,6 +418,16 @@ void probe_install_manager_init(void)
     memset(&s_probe_state, 0, sizeof(s_probe_state));
     memset(&s_uninstall_state, 0, sizeof(s_uninstall_state));
     memset(&s_probe_monitor, 0, sizeof(s_probe_monitor));
+
+    gpio_config_t re_de_config = {
+        .pin_bit_mask = (1ULL << PROBE_UART_RE_DE_PIN),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&re_de_config));
+    ESP_ERROR_CHECK(gpio_set_level(PROBE_UART_RE_DE_PIN, 0));
 
     uart_config_t cfg = {
         .baud_rate = PROBE_UART_BAUDRATE,

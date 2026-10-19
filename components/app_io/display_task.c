@@ -31,8 +31,10 @@ static const char *TAG_LCD = "DISPLAY_TASK";
 static void draw_home(u8g2_t *u8g2, const app_state_snapshot_t *st)
 {
     char line[32];
+    char adcr[5];
     uint8_t samples = 0;
     uint8_t alarms = 0;
+    uint32_t    adc = (uint32_t)st->adc_raw;
     float sum_air_t = 0.0f;
     float sum_air_u = 0.0f;
     float sum_soil_t = 0.0f;
@@ -97,8 +99,9 @@ static void draw_home(u8g2_t *u8g2, const app_state_snapshot_t *st)
         u8g2_DrawStr(u8g2, 2, 36, "Ar  T:--.- U:--.-");
         u8g2_DrawStr(u8g2, 2, 50, "Solo T:--.- U:--.-");
     }
-
-    u8g2_DrawStr(u8g2, 2, 62, "< esquerda: Sondas");
+    sprintf(adcr, "%04u", (unsigned)adc);
+    //u8g2_DrawStr(u8g2, 2, 62, adcr);
+    //u8g2_DrawStr(u8g2, 2, 62, "< esquerda: Sondas");
 }
 
 static void draw_main_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
