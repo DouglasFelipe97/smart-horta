@@ -43,6 +43,24 @@ Fonte de verdade: components/app_io/app_pin_config.h
 | APP_RTC_I2C_PORT | I2C_NUM_0 | Barramento | Porta I2C usada |
 | APP_RTC_I2C_FREQ_HZ | 100000 | Configuracao | 100 kHz |
 
+## Memoria flash AT25SF321B (SPI2)
+
+| Sinal | GPIO | Direcao | Observacao |
+|---|---:|---|---|
+| APP_FLASH_PIN_MISO | 19 | Entrada | Dados da flash para o ESP32 |
+| APP_FLASH_PIN_MOSI | 25 | Saida | Dados do ESP32 para a flash |
+| APP_FLASH_PIN_CLK | 26 | Saida | Clock SPI, modo 0 |
+| APP_FLASH_PIN_CS | 27 | Saida | Chip Select, ativo em nivel baixo |
+
+Os GPIOs escolhidos nao aparecem em outro uso neste mapa. Confirme a fiação e as
+restricoes da placa antes de conectar; os defines ficam em `app_pin_config.h`.
+
+## Registro persistente do lote
+
+A AT25SF321B possui 4 MiB. O ultimo setor de 4 KiB, no endereco `0x3FF000`, fica
+reservado para data/hora de inicio e flag do lote. O registro usa versao e CRC;
+os demais setores permanecem disponiveis para futuras configuracoes e relatorios.
+
 ## Sondas RS-485 (MAX485)
 
 | Sinal | GPIO | Direcao | Observacao |

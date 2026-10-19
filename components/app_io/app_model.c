@@ -8,6 +8,10 @@
 typedef struct {
     uint8_t menu_index;
     uint8_t settings_index;
+    app_lot_mode_t settings_lot_mode;
+    bool lot_started;
+    app_datetime_t lot_start_datetime;
+    app_datetime_t edit_lot_datetime;
     bool settings_editing_datetime;
     uint8_t settings_temperature_mode;
     uint8_t temperature_index;
@@ -29,6 +33,7 @@ typedef struct {
     int adc_raw;
     app_datetime_t datetime;
     app_datetime_t edit_datetime;
+    bool lot_write_pending;
     bool rtc_write_pending;
     uint32_t last_user_interaction_ms;
 } app_model_data_t;
@@ -37,11 +42,12 @@ static app_model_data_t s_model;            //Criando uma estrutura nova
 static SemaphoreHandle_t s_model_mutex;     //Criando semaforo para usar o mutex
 
 #define APP_MAIN_MENU_ITEMS      3
-#define APP_SETTINGS_MENU_ITEMS  5
+#define APP_SETTINGS_MENU_ITEMS  6
 #define APP_TEMPERATURE_MENU_ITEMS 2
 #define APP_BUZZER_MENU_ITEMS    2
 #define APP_PROBE_MENU_ITEMS     3
 #define APP_DATE_FIELDS          6
+#define APP_LOT_DATE_FIELDS      5
 
 #define APP_TEMPERATURE_MODE_NONE    0
 #define APP_TEMPERATURE_MODE_MENU    1
@@ -71,6 +77,7 @@ static void unlock_model(void){
 
 static void reset_settings_submenus(void)
 {
+    s_model.settings_lot_mode = APP_LOT_MODE_NONE;
     s_model.settings_editing_datetime = false;
     s_model.settings_temperature_mode = APP_TEMPERATURE_MODE_NONE;
     s_model.settings_buzzer_mode = APP_BUZZER_MODE_NONE;
@@ -121,6 +128,25 @@ static uint8_t days_in_month(uint16_t year, uint8_t month)
     }
 
     return month_days[month - 1];
+}
+
+static uint32_t date_to_day_count(const app_datetime_t *dt)
+{
+    uint32_t days = 0;
+    for (uint16_t year = 2000; year < dt->year; year++) {
+        days += is_leap_year(year) ? 366U : 365U;
+    }
+    for (uint8_t month = 1; month < dt->month; month++) {
+        days += days_in_month(dt->year, month);
+    }
+    return days + (uint32_t)(dt->day - 1U);
+}
+
+static uint64_t datetime_to_seconds(const app_datetime_t *dt)
+{
+    return (uint64_t)date_to_day_count(dt) * 86400U +
+           (uint64_t)dt->hour * 3600U +
+           (uint64_t)dt->minute * 60U + dt->second;
 }
 
 static void normalize_datetime(app_datetime_t *dt)
@@ -322,6 +348,40 @@ void app_model_set_datetime(const app_datetime_t *dt)
     unlock_model();
 }
 
+void app_model_set_lot_state(bool started, const app_datetime_t *start_datetime)
+{
+    if (started && start_datetime == NULL) {
+        return;
+    }
+
+    lock_model();
+    s_model.lot_started = started;
+    if (started) {
+        s_model.lot_start_datetime = *start_datetime;
+        normalize_datetime(&s_model.lot_start_datetime);
+    }
+    unlock_model();
+}
+
+bool app_model_take_lot_write_request(app_datetime_t *start_datetime)
+{
+    bool has_request = false;
+
+    if (start_datetime == NULL) {
+        return false;
+    }
+
+    lock_model();
+    if (s_model.lot_write_pending) {
+        *start_datetime = s_model.lot_start_datetime;
+        s_model.lot_write_pending = false;
+        has_request = true;
+    }
+    unlock_model();
+
+    return has_request;
+}
+
 bool app_model_take_rtc_write_request(app_datetime_t *dt)
 {
     bool has_request = false;
@@ -350,6 +410,7 @@ void app_model_get_snapshot(app_state_snapshot_t *snapshot)
     snapshot->adc_raw = s_model.adc_raw;
     snapshot->menu_index = s_model.menu_index;
     snapshot->settings_index = s_model.settings_index;
+    snapshot->settings_lot_mode = s_model.settings_lot_mode;
     snapshot->settings_editing_datetime = s_model.settings_editing_datetime;
     snapshot->settings_temperature_mode = s_model.settings_temperature_mode;
     snapshot->temperature_index = s_model.temperature_index;
@@ -369,9 +430,28 @@ void app_model_get_snapshot(app_state_snapshot_t *snapshot)
     }
     snapshot->key_beep_enabled = s_model.key_beep_enabled;
     snapshot->datetime_field_index = s_model.datetime_field_index;
+    snapshot->lot_started = s_model.lot_started;
+    snapshot->lot_start_datetime = s_model.lot_start_datetime;
+
+    snapshot->lot_status = APP_LOT_STATUS_INACTIVE;
+    snapshot->lot_age_days = 0;
+    if (s_model.lot_started) {
+        uint64_t now_seconds = datetime_to_seconds(&s_model.datetime);
+        uint64_t start_seconds = datetime_to_seconds(&s_model.lot_start_datetime);
+        if (start_seconds > now_seconds) {
+            snapshot->lot_status = APP_LOT_STATUS_SCHEDULED;
+        } else {
+            snapshot->lot_status = APP_LOT_STATUS_ACTIVE;
+            uint32_t today = date_to_day_count(&s_model.datetime);
+            uint32_t start_day = date_to_day_count(&s_model.lot_start_datetime);
+            snapshot->lot_age_days = today - start_day;
+        }
+    }
 
     if (s_model.settings_editing_datetime) {
         snapshot->datetime = s_model.edit_datetime;
+    } else if (s_model.settings_lot_mode == APP_LOT_MODE_EDIT) {
+        snapshot->datetime = s_model.edit_lot_datetime;
     } else {
         snapshot->datetime = s_model.datetime;
     }
@@ -442,6 +522,38 @@ void app_model_process_key(app_key_t key)
                     s_model.rtc_write_pending = true;
                     s_model.settings_editing_datetime = false;
                 }
+            } else if (s_model.settings_lot_mode != APP_LOT_MODE_NONE) {
+                if (s_model.settings_lot_mode == APP_LOT_MODE_MENU) {
+                    if (key == APP_KEY_ENTER) {
+                        s_model.edit_lot_datetime = s_model.datetime;
+                        s_model.edit_lot_datetime.second = 0;
+                        s_model.datetime_field_index = 0;
+                        s_model.settings_lot_mode = APP_LOT_MODE_EDIT;
+                    } else if (key == APP_KEY_BACK) {
+                        s_model.settings_lot_mode = APP_LOT_MODE_NONE;
+                    }
+                } else if (s_model.settings_lot_mode == APP_LOT_MODE_EDIT) {
+                    if (key == APP_KEY_UP) {
+                        increment_field(&s_model.edit_lot_datetime, s_model.datetime_field_index);
+                    } else if (key == APP_KEY_DOWN) {
+                        decrement_field(&s_model.edit_lot_datetime, s_model.datetime_field_index);
+                    } else if (key == APP_KEY_ENTER) {
+                        if (s_model.datetime_field_index + 1U < APP_LOT_DATE_FIELDS) {
+                            s_model.datetime_field_index++;
+                        } else {
+                            normalize_datetime(&s_model.edit_lot_datetime);
+                            s_model.lot_start_datetime = s_model.edit_lot_datetime;
+                            s_model.lot_started = true;
+                            s_model.lot_write_pending = true;
+                            s_model.settings_lot_mode = APP_LOT_MODE_CONFIRMED;
+                        }
+                    } else if (key == APP_KEY_BACK) {
+                        s_model.settings_lot_mode = APP_LOT_MODE_MENU;
+                    }
+                } else if (s_model.settings_lot_mode == APP_LOT_MODE_CONFIRMED &&
+                           (key == APP_KEY_ENTER || key == APP_KEY_BACK)) {
+                    s_model.settings_lot_mode = APP_LOT_MODE_MENU;
+                }
             } else if (s_model.settings_temperature_mode == APP_TEMPERATURE_MODE_MENU) {
                 if (key == APP_KEY_UP) {
                     s_model.temperature_index = (s_model.temperature_index + APP_TEMPERATURE_MENU_ITEMS - 1U) % APP_TEMPERATURE_MENU_ITEMS;
@@ -507,18 +619,19 @@ void app_model_process_key(app_key_t key)
                     s_model.screen = APP_SCREEN_MENU;
                     reset_settings_submenus();
                 } else if (key == APP_KEY_ENTER) {
-                    // Somente item "Data" entra em modo de edicao.
                     if (s_model.settings_index == 0U) {
+                        s_model.settings_lot_mode = APP_LOT_MODE_MENU;
+                    } else if (s_model.settings_index == 1U) {
                         s_model.settings_editing_datetime = true;
                         s_model.datetime_field_index = 0;
                         s_model.edit_datetime = s_model.datetime;
-                    } else if (s_model.settings_index == 1U) {
+                    } else if (s_model.settings_index == 2U) {
                         s_model.settings_temperature_mode = APP_TEMPERATURE_MODE_MENU;
                         s_model.temperature_index = 0;
-                    } else if (s_model.settings_index == 2U) {
+                    } else if (s_model.settings_index == 3U) {
                         s_model.settings_buzzer_mode = APP_BUZZER_MODE_MENU;
                         s_model.buzzer_index = s_model.key_beep_enabled ? 0U : 1U;
-                    } else if (s_model.settings_index == 4U) {
+                    } else if (s_model.settings_index == 5U) {
                         // Entra no gerenciador de sondas a partir de Ajustes.
                         s_model.settings_probe_mode = APP_PROBE_MODE_MENU;
                         s_model.probe_menu_index = 0;

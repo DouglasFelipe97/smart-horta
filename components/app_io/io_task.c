@@ -8,6 +8,7 @@
 #include "esp_log.h"
 #include "app_pin_config.h"
 #include "app_model.h"
+#include "app_lot_store.h"
 // #include "app_menu_functions"
 #include "keyboard.h"
 #include "probe_install.h"
@@ -63,6 +64,14 @@ void io_task(void *pvParameters){
         probe_install_manager_periodic(now_ms);
         run_uninstall_sequence(now_ms);
         probe_monitor_manager_periodic(now_ms);
+
+        app_datetime_t lot_start_datetime;
+        if (app_model_take_lot_write_request(&lot_start_datetime)) {
+            esp_err_t err = app_lot_store_save(&lot_start_datetime);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG_IO, "Falha ao persistir inicio do lote: %s", esp_err_to_name(err));
+            }
+        }
 
         vTaskDelay(pdMS_TO_TICKS(50));
     }

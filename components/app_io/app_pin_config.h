@@ -46,6 +46,15 @@
 #define APP_RTC_I2C_FREQ_HZ      100000
 
 // ------------------------------
+// Memoria flash AT25SF321B (SPI)
+// ------------------------------
+#define APP_FLASH_SPI_HOST       SPI2_HOST
+#define APP_FLASH_PIN_MISO       GPIO_NUM_19
+#define APP_FLASH_PIN_MOSI       GPIO_NUM_25
+#define APP_FLASH_PIN_CLK        GPIO_NUM_26
+#define APP_FLASH_PIN_CS         GPIO_NUM_27
+
+// ------------------------------
 // Configuração de ADC
 // ------------------------------
 // Teclado analogico ligado no GPIO36 (ADC1_CHANNEL_0)

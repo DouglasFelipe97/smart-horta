@@ -7,6 +7,8 @@
 #include "display_task.h"
 #include "app_pin_config.h"
 #include "rtc_task.h"
+#include "app_storage.h"
+#include "app_lot_store.h"
 
 // Mesma prioridade para as duas tasks, conforme solicitado.
 #define APP_ADC_TASK_PRIORITY     6
@@ -46,6 +48,22 @@ void app_main(void)
     esp_err_t rtc_i2c_err = app_configure_rtc_i2c();
     if (rtc_i2c_err != ESP_OK) {
         ESP_LOGE(TAG_MAIN, "Falha ao configurar I2C do RTC: %s", esp_err_to_name(rtc_i2c_err));
+    }
+
+    // Inicializa a AT25SF321B e cria a task que serializa operacoes na flash.
+    esp_err_t storage_err = app_storage_init();
+    if (storage_err != ESP_OK) {
+        ESP_LOGE(TAG_MAIN, "Falha ao inicializar armazenamento flash: %s", esp_err_to_name(storage_err));
+    } else {
+        app_datetime_t lot_start_datetime;
+        esp_err_t lot_load_err = app_lot_store_load(&lot_start_datetime);
+        if (lot_load_err == ESP_OK) {
+            app_model_set_lot_state(true, &lot_start_datetime);
+            ESP_LOGI(TAG_MAIN, "Inicio do lote restaurado da flash");
+        } else if (lot_load_err != ESP_ERR_NOT_FOUND) {
+            ESP_LOGW(TAG_MAIN, "Registro do lote invalido ou inacessivel: %s",
+                     esp_err_to_name(lot_load_err));
+        }
     }
 
     // // Configura PWM para o buzzer.
@@ -122,7 +140,7 @@ void app_main(void)
     
     ESP_LOGI(
         TAG_MAIN,
-        "Sistema iniciado com duas tasks na mesma prioridade (%d).",
+        "Sistema iniciado; prioridade das tasks principais: %d.",
         APP_TASK_PRIORITY
     );
 

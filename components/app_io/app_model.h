@@ -20,6 +20,19 @@ typedef enum {
     APP_SCREEN_MENU_DATE_TIME,
 } app_screen_t;
 
+typedef enum {
+    APP_LOT_MODE_NONE = 0,
+    APP_LOT_MODE_MENU,
+    APP_LOT_MODE_EDIT,
+    APP_LOT_MODE_CONFIRMED,
+} app_lot_mode_t;
+
+typedef enum {
+    APP_LOT_STATUS_INACTIVE = 0,
+    APP_LOT_STATUS_SCHEDULED,
+    APP_LOT_STATUS_ACTIVE,
+} app_lot_status_t;
+
 // Teclas lidas via teclado resistivo no ADC.
 typedef enum {
     APP_KEY_NONE = 0,
@@ -76,6 +89,7 @@ typedef struct {
     int adc_raw;
     uint8_t menu_index;
     uint8_t settings_index;
+    app_lot_mode_t settings_lot_mode;
     bool settings_editing_datetime;
     uint8_t settings_temperature_mode;
     uint8_t temperature_index;
@@ -93,6 +107,10 @@ typedef struct {
     bool key_beep_enabled;
     uint8_t datetime_field_index;
     app_datetime_t datetime;
+    bool lot_started;
+    app_datetime_t lot_start_datetime;
+    app_lot_status_t lot_status;
+    uint32_t lot_age_days;
 } app_state_snapshot_t;
 
 void app_model_init(void);
@@ -104,6 +122,12 @@ void app_model_process_key(app_key_t key);
 
 // Atualiza cache local da data/hora lida no RTC.
 void app_model_set_datetime(const app_datetime_t *dt);
+
+// Restaura o estado persistido do lote sem gerar novo pedido de gravacao.
+void app_model_set_lot_state(bool started, const app_datetime_t *start_datetime);
+
+// Consome o pedido para persistir um lote confirmado.
+bool app_model_take_lot_write_request(app_datetime_t *start_datetime);
 
 // Entrega uma solicitacao pendente de escrita no RTC e limpa o flag.
 bool app_model_take_rtc_write_request(app_datetime_t *dt);

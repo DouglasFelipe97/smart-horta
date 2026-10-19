@@ -31,10 +31,8 @@ static const char *TAG_LCD = "DISPLAY_TASK";
 static void draw_home(u8g2_t *u8g2, const app_state_snapshot_t *st)
 {
     char line[32];
-    char adcr[5];
     uint8_t samples = 0;
     uint8_t alarms = 0;
-    uint32_t    adc = (uint32_t)st->adc_raw;
     float sum_air_t = 0.0f;
     float sum_air_u = 0.0f;
     float sum_soil_t = 0.0f;
@@ -99,9 +97,14 @@ static void draw_home(u8g2_t *u8g2, const app_state_snapshot_t *st)
         u8g2_DrawStr(u8g2, 2, 36, "Ar  T:--.- U:--.-");
         u8g2_DrawStr(u8g2, 2, 50, "Solo T:--.- U:--.-");
     }
-    sprintf(adcr, "%04u", (unsigned)adc);
-    //u8g2_DrawStr(u8g2, 2, 62, adcr);
-    //u8g2_DrawStr(u8g2, 2, 62, "< esquerda: Sondas");
+    if (st->lot_status == APP_LOT_STATUS_ACTIVE) {
+        snprintf(line, sizeof(line), "Lote: ATIVO %lu d", (unsigned long)st->lot_age_days);
+    } else if (st->lot_status == APP_LOT_STATUS_SCHEDULED) {
+        snprintf(line, sizeof(line), "Lote: AGENDADO");
+    } else {
+        snprintf(line, sizeof(line), "Lote: INATIVO");
+    }
+    u8g2_DrawStr(u8g2, 2, 62, line);
 }
 
 static void draw_main_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
@@ -192,14 +195,14 @@ static void draw_probe_rows(u8g2_t *u8g2, const app_state_snapshot_t *st)
 
 static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
 {
-    static const char *items[] = {"Data", "Temperaturas", "Buzzer", "Umidade", "Instalar Sondas"};
+    static const char *items[] = {"Lote", "Data", "Temperaturas", "Buzzer", "Umidade", "Instalar Sondas"};
     static const char *temp_items[] = {"Curvas", "Offset"};
     static const char *buzzer_items[] = {"Habilitar", "Desabilitar"};
     static const char *probe_items[] = {"Instalar", "Desinstalar", "Sondas"};
     char line[64];
 
     u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
-    u8g2_DrawStr(u8g2, 2, 10, "AJUSTES");
+    u8g2_DrawStr(u8g2, 2, 10, st->settings_lot_mode == APP_LOT_MODE_NONE ? "AJUSTES" : "LOTE");
     u8g2_DrawHLine(u8g2, 0, 12, 128);
 
     if (st->settings_editing_datetime) {
@@ -233,6 +236,34 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
         u8g2_DrawStr(u8g2, 2, 46, line);
         snprintf(line, sizeof(line), "%02u:%02u:%02u", st->datetime.hour, st->datetime.minute, st->datetime.second);
         u8g2_DrawStr(u8g2, 2, 58, line);
+    } else if (st->settings_lot_mode == APP_LOT_MODE_MENU) {
+        u8g2_DrawStr(u8g2, 2, 24, ">Iniciar Lote");
+        if (st->lot_started) {
+            const char *status = st->lot_status == APP_LOT_STATUS_SCHEDULED ? "Agendado" : "Ja iniciado";
+            snprintf(line, sizeof(line), "Atual: %s", status);
+            u8g2_DrawStr(u8g2, 2, 40, line);
+        }
+    } else if (st->settings_lot_mode == APP_LOT_MODE_EDIT) {
+        static const char *lot_fields[] = {"Dia", "Mes", "Ano", "Hora", "Min"};
+        snprintf(line, sizeof(line), "Inicio: %s", lot_fields[st->datetime_field_index]);
+        u8g2_DrawStr(u8g2, 2, 24, line);
+        snprintf(line, sizeof(line), "%02u/%02u/%04u",
+                 st->datetime.day, st->datetime.month, st->datetime.year);
+        u8g2_DrawStr(u8g2, 2, 40, line);
+        snprintf(line, sizeof(line), "%02u:%02u", st->datetime.hour, st->datetime.minute);
+        u8g2_DrawStr(u8g2, 2, 54, line);
+    } else if (st->settings_lot_mode == APP_LOT_MODE_CONFIRMED) {
+        u8g2_DrawStr(u8g2, 2, 24,
+                     st->lot_status == APP_LOT_STATUS_SCHEDULED ? "LOTE AGENDADO" : "LOTE INICIADO");
+        snprintf(line, sizeof(line), "%02u/%02u/%04u",
+                 st->lot_start_datetime.day,
+                 st->lot_start_datetime.month,
+                 st->lot_start_datetime.year);
+        u8g2_DrawStr(u8g2, 2, 40, line);
+        snprintf(line, sizeof(line), "%02u:%02u",
+                 st->lot_start_datetime.hour, st->lot_start_datetime.minute);
+        u8g2_DrawStr(u8g2, 2, 52, line);
+        u8g2_DrawStr(u8g2, 2, 62, "OK/BACK: voltar");
     } else if (st->settings_temperature_mode == 1) {
         u8g2_DrawStr(u8g2, 2, 22, "> Temperaturas");
         for (int i = 0; i < 2; i++) {
@@ -301,15 +332,14 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
         u8g2_DrawHLine(u8g2, 0, 12, 128);
         draw_probe_rows(u8g2, st);
     } else {
-        for (int i = 0; i < 5; i++) {
-            if(st->settings_index < 4){
-                snprintf(line, sizeof(line), "%c%s", (st->settings_index == (uint8_t)i) ? '>' : ' ', items[i]);
-                u8g2_DrawStr(u8g2, 2, 23 + (i * 12), line);
-            }
-            else if(st->settings_index >= 4 && i >= 4){
-                snprintf(line, sizeof(line), "%c%s", (st->settings_index == (uint8_t)i) ? '>' : ' ', items[i]);
-                u8g2_DrawStr(u8g2, 2, 23 + ((i-4) * 12), line);
-            }
+        uint8_t first_visible = st->settings_index > 3U
+            ? (uint8_t)(st->settings_index - 3U)
+            : 0U;
+        for (uint8_t row = 0; row < 4U && first_visible + row < 6U; row++) {
+            uint8_t item_index = (uint8_t)(first_visible + row);
+            snprintf(line, sizeof(line), "%c%s",
+                     st->settings_index == item_index ? '>' : ' ', items[item_index]);
+            u8g2_DrawStr(u8g2, 2, 23 + (row * 12), line);
         }
     }
 }
