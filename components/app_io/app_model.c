@@ -1,11 +1,15 @@
+// Adquire o mutex antes de ler ou alterar qualquer campo do estado global.
+// Libera a secao critica para as demais tasks.
 #include "app_model.h"
 
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
-// Estrutura interna protegida por mutex para comunicacao entre tasks.
+// Estado privado protegido por mutex. Campos em grupos guardam navegação,
+// dados de negocio, pedidos para workers e snapshots de hardware.
 typedef struct {
+    // Cursor e subfluxos temporarios da interface.
     uint8_t menu_index;
     uint8_t settings_index;
     app_lot_mode_t settings_lot_mode;
@@ -13,6 +17,7 @@ typedef struct {
     app_datetime_t lot_start_datetime;
     app_datetime_t edit_lot_datetime;
     bool settings_editing_datetime;
+    // Configuracao ambiental, debounce de persistencia e estado do alarme.
     app_ambience_mode_t ambience_mode;
     uint8_t ambience_curve_index;
     uint8_t ambience_field_index;
@@ -22,6 +27,7 @@ typedef struct {
     bool ambience_alarm_active;
     bool ambience_write_pending;
     uint32_t ambience_last_edit_ms;
+    // Preferencias e estado das rotinas de buzzer/sondas.
     uint8_t settings_buzzer_mode;
     uint8_t buzzer_index;
     uint8_t settings_probe_mode;
@@ -33,6 +39,7 @@ typedef struct {
     bool probe_uninstall_finished;
     uint8_t probe_uninstall_cycle;
     app_probe_snapshot_t probes[APP_PROBE_COUNT];
+    // Eventos, buffers de edicao, relogio e comandos pendentes aos workers.
     bool key_beep_enabled;
     bool key_press_pending;
     uint8_t datetime_field_index;
@@ -80,6 +87,7 @@ static void unlock_model(void){
 }
 
 static void reset_settings_submenus(void)
+// Cancela modos transitorios de Ajustes sem apagar valores configurados.
 {
     s_model.settings_lot_mode = APP_LOT_MODE_NONE;
     s_model.settings_editing_datetime = false;
@@ -89,6 +97,7 @@ static void reset_settings_submenus(void)
 }
 
 static bool adjust_ambience_field_unlocked(bool increase)
+// Ajusta campo selecionado, limita faixas e preserva ordem das idades.
 {
     app_ambience_curve_t *curve = &s_model.ambience_curves[s_model.ambience_curve_index];
     bool changed = false;
@@ -178,6 +187,7 @@ static bool adjust_ambience_field_unlocked(bool increase)
 }
 
 static void reset_probe_install_data_unlocked(void)
+// Zera status e telemetria; a funcao exige que o chamador segure o mutex.
 {
     // Zera estado operacional das tres telas de sondas:
     // - Instalacao (status e contador)
@@ -205,11 +215,13 @@ static void reset_probe_install_data_unlocked(void)
 }
 
 static bool is_leap_year(uint16_t year)
+// Utilitarios de calendario gregoriano usados pelo editor e idade do lote.
 {
     return ((year % 4U) == 0U && (year % 100U) != 0U) || ((year % 400U) == 0U);
 }
 
 static uint8_t days_in_month(uint16_t year, uint8_t month)
+// Retorna dias do mes, incluindo fevereiro de ano bissexto.
 {
     static const uint8_t month_days[] = {31,28,31,30,31,30,31,31,30,31,30,31};
     if (month < 1 || month > 12) {
@@ -224,6 +236,7 @@ static uint8_t days_in_month(uint16_t year, uint8_t month)
 }
 
 static uint32_t date_to_day_count(const app_datetime_t *dt)
+// Converte data para dias desde 01/01/2000, base do calculo de idade do lote.
 {
     uint32_t days = 0;
     for (uint16_t year = 2000; year < dt->year; year++) {
@@ -236,6 +249,7 @@ static uint32_t date_to_day_count(const app_datetime_t *dt)
 }
 
 static uint64_t datetime_to_seconds(const app_datetime_t *dt)
+// Converte data/hora em segundos para diferenciar lote ativo de agendado.
 {
     return (uint64_t)date_to_day_count(dt) * 86400U +
            (uint64_t)dt->hour * 3600U +
@@ -243,6 +257,7 @@ static uint64_t datetime_to_seconds(const app_datetime_t *dt)
 }
 
 static void normalize_datetime(app_datetime_t *dt)
+// Limita campos civis aos intervalos aceitos pelo RTC e pelo modelo.
 {
     if (dt == NULL) {
         return;
@@ -281,6 +296,7 @@ static void normalize_datetime(app_datetime_t *dt)
 }
 
 static void increment_field(app_datetime_t *dt, uint8_t field)
+// Incrementa campo selecionado com wrap e corrige dias invalidos no mes.
 {
     if (dt == NULL) {
         return;
@@ -326,6 +342,7 @@ static void increment_field(app_datetime_t *dt, uint8_t field)
 }
 
 static void decrement_field(app_datetime_t *dt, uint8_t field)
+// Decrementa campo selecionado com wrap e corrige dias invalidos no mes.
 {
     if (dt == NULL) {
         return;
@@ -374,6 +391,7 @@ static void decrement_field(app_datetime_t *dt, uint8_t field)
 }
 
 void app_model_init(void)
+// Inicializa mutex, menus, idades default e placeholders antes das tasks.
 {
     // Limpa toda a estrutura com zero.
     memset(&s_model, 0, sizeof(s_model));
@@ -413,6 +431,7 @@ void app_model_init(void)
 }
 
 void app_model_set_adc_raw(int adc_raw)
+// Publica a ultima amostra bruta do ADC para diagnostico da interface.
 {
     lock_model();
     s_model.adc_raw = adc_raw;
@@ -420,6 +439,7 @@ void app_model_set_adc_raw(int adc_raw)
 }
 
 int app_model_get_adc_raw(void)
+// Consulta a amostra mais recente sob mutex.
 {
     lock_model();
     int value = s_model.adc_raw;
@@ -428,6 +448,7 @@ int app_model_get_adc_raw(void)
 }
 
 void app_model_set_datetime(const app_datetime_t *dt)
+// Atualiza cache do RTC e buffer de edicao quando o usuario nao o altera.
 {
     if (dt == NULL) {
         return;
@@ -446,6 +467,7 @@ void app_model_set_datetime(const app_datetime_t *dt)
 }
 
 void app_model_set_lot_state(bool started, const app_datetime_t *start_datetime)
+// Restaura estado do lote sem criar pedido de escrita durante o boot.
 {
     if (started && start_datetime == NULL) {
         return;
@@ -463,6 +485,7 @@ void app_model_set_lot_state(bool started, const app_datetime_t *start_datetime)
 }
 
 bool app_model_take_lot_write_request(app_datetime_t *start_datetime, bool *started)
+// Consome pedido de inicio/fim de lote produzido pela navegacao.
 {
     bool has_request = false;
 
@@ -483,6 +506,7 @@ bool app_model_take_lot_write_request(app_datetime_t *start_datetime, bool *star
 }
 
 bool app_model_take_rtc_write_request(app_datetime_t *dt)
+// Consome pedido de escrita no DS3231 gerado pelo editor de data/hora.
 {
     bool has_request = false;
 
@@ -500,6 +524,7 @@ bool app_model_take_rtc_write_request(app_datetime_t *dt)
 }
 
 void app_model_get_snapshot(app_state_snapshot_t *snapshot)
+// Copia estado coerente e calcula status/idade do lote dentro da secao critica.
 {
     if (snapshot == NULL) {
         return;
@@ -564,6 +589,7 @@ void app_model_get_snapshot(app_state_snapshot_t *snapshot)
 }
 
 void app_model_process_key(app_key_t key)
+// Maquina de estados central que aplica eventos de tecla a tela/submenu atual.
 {
     if (key == APP_KEY_NONE) {
         return;
@@ -797,6 +823,7 @@ void app_model_process_key(app_key_t key)
 }
 
 void app_model_set_key_press_flag(void)
+// Marca evento estavel de tecla para o io_task emitir beep no maximo uma vez.
 {
     lock_model();
     s_model.key_press_pending = true;
@@ -804,6 +831,7 @@ void app_model_set_key_press_flag(void)
 }
 
 bool app_model_take_key_press_flag(void)
+// Consome e limpa o evento de tecla pendente.
 {
     bool has_key_press = false;
 
@@ -818,6 +846,7 @@ bool app_model_take_key_press_flag(void)
 }
 
 bool app_model_is_key_beep_enabled(void)
+// Consulta opcao de beep escolhida no submenu Buzzer.
 {
     bool enabled;
 
@@ -829,6 +858,7 @@ bool app_model_is_key_beep_enabled(void)
 }
 
 bool app_model_is_probe_install_screen_active(void)
+// Consultas desacoplam as FSMs RS-485 da implementacao visual do display.
 {
     bool active;
 
@@ -869,6 +899,7 @@ bool app_model_is_probe_list_screen_active(void)
 }
 
 void app_model_set_probe_install_status(bool running, bool finished, uint8_t completed_count)
+// Atualiza a FSM de instalacao; limita completed_count aos quatro slots.
 {
     lock_model();
     s_model.probe_install_running = running;
@@ -880,6 +911,7 @@ void app_model_set_probe_install_status(bool running, bool finished, uint8_t com
 }
 
 void app_model_set_probe_uninstall_status(bool running, bool finished, uint8_t cycle)
+// Atualiza a FSM de desinstalacao; limita ciclo a tres passagens.
 {
     lock_model();
     s_model.probe_uninstall_running = running;
@@ -889,6 +921,7 @@ void app_model_set_probe_uninstall_status(bool running, bool finished, uint8_t c
 }
 
 void app_model_set_probe_snapshot(uint8_t probe_slot,
+                                // Publica identidade e telemetria; slots fora de 0..3 sao ignorados.
                                   uint8_t probe_id,
                                   app_probe_type_t probe_type,
                                   bool installed,
@@ -918,6 +951,7 @@ void app_model_set_probe_snapshot(uint8_t probe_slot,
 }
 
 void app_model_reset_probe_install_data(void)
+// Wrapper sincronizado para limpar status e placeholders de sondas.
 {
     lock_model();
     reset_probe_install_data_unlocked();
@@ -925,6 +959,7 @@ void app_model_reset_probe_install_data(void)
 }
 
 void app_model_exit_probe_uninstall_to_menu(void)
+// Retorna da tela de desinstalacao apos a pausa visual de conclusao.
 {
     lock_model();
     // Usado pela rotina de desinstalacao apos delay visual de conclusao.
@@ -936,6 +971,7 @@ void app_model_exit_probe_uninstall_to_menu(void)
 }
 
 void app_model_set_ambience_curves(const app_ambience_curve_t curves[APP_AMBIENCE_CURVE_COUNT],
+                                // Restaura curvas e estado ON/OFF lidos da flash sem agendar nova gravacao.
                                    bool configured)
 {
     if (curves == NULL) {
@@ -951,6 +987,7 @@ void app_model_set_ambience_curves(const app_ambience_curve_t curves[APP_AMBIENC
 }
 
 bool app_model_take_ambience_write_request(app_ambience_curve_t curves[APP_AMBIENCE_CURVE_COUNT],
+                                        // Entrega snapshot pendente apos debounce, evitando writes por tecla.
                                            bool *configured)
 {
     if (curves == NULL || configured == NULL) {
@@ -972,6 +1009,7 @@ bool app_model_take_ambience_write_request(app_ambience_curve_t curves[APP_AMBIE
 }
 
 void app_model_request_ambience_write(void)
+// Reagenda persistencia apos erro de armazenamento.
 {
     lock_model();
     s_model.ambience_write_pending = true;
@@ -980,6 +1018,7 @@ void app_model_request_ambience_write(void)
 }
 
 void app_model_set_ambience_alarm_active(bool active)
+// Publica alarme para HOME, indicador global e buzzer.
 {
     lock_model();
     s_model.ambience_alarm_active = active;
@@ -987,6 +1026,7 @@ void app_model_set_ambience_alarm_active(bool active)
 }
 
 void app_model_check_inactivity_timeout(uint32_t now_ms)
+// Retorna a HOME apos 30 s sem tecla, preservando lote e curvas configuradas.
 {
     lock_model();
 

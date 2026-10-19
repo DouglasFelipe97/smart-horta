@@ -1,5 +1,6 @@
 #include "app_pin_config.h"
 
+// Configura entradas digitais gerais sem pull-up/down interno.
 void app_configure_gpio_inputs(void){
     /*Configuraqndo entradas de uso geral*/
     gpio_config_t in_config = {
@@ -12,6 +13,7 @@ void app_configure_gpio_inputs(void){
     gpio_config(&in_config);
 }
 
+// Configura GPIOs dos indicadores locais como saidas push-pull.
 void app_configure_gpio_leds(void){
     /*Configurando leds de uso geral*/
     gpio_config_t leds_config = {
@@ -24,6 +26,7 @@ void app_configure_gpio_leds(void){
     gpio_config(&leds_config);
 }
 
+// Configura o buzzer local; o padrao de repouso e escrito pelo io_task.
 void app_configure_gpio_buzzer(void){
     /*Configurando buzzer de uso geral*/
     gpio_config_t buzzer_config = {
@@ -36,6 +39,7 @@ void app_configure_gpio_buzzer(void){
     gpio_config(&buzzer_config);
 }
 
+// Configura pinos do ST7920 e aplica niveis iniciais antes do callback u8g2.
 void app_configure_lcd_pins(void){
     /*Configurando pinos usados pelo display em modo saida*/
     gpio_config_t lcd_conf = {
@@ -57,6 +61,7 @@ void app_configure_lcd_pins(void){
     gpio_set_level(APP_LCD_PIN_RST, 1);
 }
 
+// Seleciona largura e atenuacao do ADC1 usado pelo teclado resistivo.
 void app_configure_adc(void){
     // Configuracao basica para o ADC1 usado no teclado analogico.
     // Essas duas chamadas definem como o ESP32 ira amostrar o pino.
@@ -64,6 +69,7 @@ void app_configure_adc(void){
     adc1_config_channel_atten(APP_ADC_KEYBOARD_CHANNEL, APP_ADC_ATTEN);
 }
 
+// Instala I2C_NUM_0 para RTC e PCF8574; chamadas podem reportar driver ja ocupado.
 esp_err_t app_configure_rtc_i2c(void)
 {
     i2c_config_t conf = {
@@ -90,6 +96,7 @@ esp_err_t app_configure_rtc_i2c(void)
     return i2c_driver_install(APP_RTC_I2C_PORT, conf.mode, 0, 0, 0);
 }
 
+// Inicializa perifericos GPIO/ADC locais; I2C e iniciado separadamente no boot.
 void app_config_pins(void){
     app_configure_gpio_inputs();
     app_configure_gpio_leds();

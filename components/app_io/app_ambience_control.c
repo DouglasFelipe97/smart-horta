@@ -21,18 +21,21 @@ typedef enum {
     APP_AMBIENCE_CONDITION_COUNT,
 } app_ambience_condition_t;
 
+// Metas numericas interpoladas para a idade corrente do lote.
 typedef struct {
-    float air_temperature;
-    float air_humidity;
-    float soil_humidity;
+    float air_temperature; // Celsius.
+    float air_humidity;    // Percentual relativo.
+    float soil_humidity;   // Percentual relativo.
 } app_ambience_targets_t;
 
 static const char *TAG_AMBIENCE_CONTROL = "AMBIENCE_CONTROL";
+// Estado temporal privado ao io_task; cada condicao possui atraso independente.
 static bool s_condition_active[APP_AMBIENCE_CONDITION_COUNT];
 static uint32_t s_condition_started_ms[APP_AMBIENCE_CONDITION_COUNT];
 static uint8_t s_applied_output_mask;
 static uint32_t s_last_output_attempt_ms[APP_OUTPUT_COUNT];
 
+// Seleciona o ponto mais recente cuja idade ja foi atingida.
 static const app_ambience_curve_t *curve_for_age(const app_state_snapshot_t *snapshot,
                                                   uint32_t age_days,
                                                   uint8_t *curve_index)
@@ -46,6 +49,7 @@ static const app_ambience_curve_t *curve_for_age(const app_state_snapshot_t *sna
     return &snapshot->ambience_curves[index];
 }
 
+// Calcula interpolacao linear entre duas idades, preservando extremos.
 static float interpolate_value(float first, float second, uint32_t age,
                                uint16_t first_age, uint16_t second_age)
 {
@@ -59,6 +63,7 @@ static float interpolate_value(float first, float second, uint32_t age,
     return first + ((second - first) * progress);
 }
 
+// Calcula metas do trecho atual; a contagem de saídas permanece no ponto inicial.
 static app_ambience_targets_t targets_for_age(const app_state_snapshot_t *snapshot,
                                                uint32_t age_days,
                                                uint8_t *curve_index)
@@ -97,6 +102,7 @@ static app_ambience_targets_t targets_for_age(const app_state_snapshot_t *snapsh
     return targets;
 }
 
+// Converte a violacao em quantidade: primeira saida no limite, outra por unidade.
 static uint8_t count_for_deviation(uint8_t configured_count, float deviation)
 {
     if (configured_count == 0U) {
@@ -106,6 +112,7 @@ static uint8_t count_for_deviation(uint8_t configured_count, float deviation)
     return requested < configured_count ? requested : configured_count;
 }
 
+// Marca os primeiros N canais consecutivos de um grupo como desejados.
 static void set_group_outputs(bool *desired, uint8_t first_output, uint8_t count)
 {
     for (uint8_t index = 0; index < count; index++) {
@@ -113,6 +120,7 @@ static void set_group_outputs(bool *desired, uint8_t first_output, uint8_t count
     }
 }
 
+// Escreve somente mudancas no expansor e limita tentativas repetidas apos erro.
 static void apply_outputs(const bool desired[APP_OUTPUT_COUNT], uint32_t now_ms)
 {
     for (uint8_t output = 0; output < APP_OUTPUT_COUNT; output++) {
@@ -141,6 +149,8 @@ static void apply_outputs(const bool desired[APP_OUTPUT_COUNT], uint32_t now_ms)
     }
 }
 
+// Avalia sondas validas, timers independentes por condicao, histerese e alarmes.
+// Sem lote ativo, perfil confirmado ou polling, todas as condicoes sao limpas.
 void app_ambience_control_update(const app_state_snapshot_t *snapshot,
                                  uint32_t now_ms,
                                  bool sensor_monitor_active)

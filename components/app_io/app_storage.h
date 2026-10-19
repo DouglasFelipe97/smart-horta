@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include "esp_err.h"
 
+// Fachada serializada para a flash SPI: init cria a task/queue; read/write/erase
+// sao sincronos para o chamador, embora o acesso fisico ocorra em storage_task.
 esp_err_t app_storage_init(void);
 
 // Operacoes sincronas para o chamador; a task de armazenamento executa o acesso SPI.

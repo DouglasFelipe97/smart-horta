@@ -16,6 +16,7 @@
 
 static const char *TAG_IO = "IO_TASK";
 
+// Orquestra LEDs, buzzer, FSMs RS-485, controle de ambiencia e persistencia do lote.
 void io_task(void *pvParameters){
     bool led_state = false;
 
@@ -107,6 +108,7 @@ void io_task(void *pvParameters){
     vTaskDelete(NULL);
 }
 
+// Task rapida de entrada: ADC -> debounce -> evento do modelo -> timeout de UI.
 void adc_task(void *pvParameters){
     keyboard_adc_init();        //inicia o teclado ADC
     while (1) {

@@ -17,6 +17,7 @@
 static const char *TAG_AMBIENCE_STORE = "AMBIENCE_STORE";
 static const uint8_t s_ambience_magic[4] = {'S', 'H', 'A', 'M'};
 
+// CRC32 usado para rejeitar registros incompletos ou corrompidos na flash.
 static uint32_t calculate_crc32(const uint8_t *data, size_t size)
 {
     uint32_t crc = 0xFFFFFFFFU;
@@ -29,6 +30,7 @@ static uint32_t calculate_crc32(const uint8_t *data, size_t size)
     return ~crc;
 }
 
+// Valida faixas, contagens e ordem estritamente crescente das idades.
 static bool curves_are_valid(const app_ambience_curve_t curves[APP_AMBIENCE_CURVE_COUNT])
 {
     if (curves == NULL) {
@@ -51,12 +53,14 @@ static bool curves_are_valid(const app_ambience_curve_t curves[APP_AMBIENCE_CURV
     return true;
 }
 
+// Serializacao little-endian explicita para nao depender de padding da struct.
 static void encode_u16(uint8_t *record, size_t *offset, uint16_t value)
 {
     record[(*offset)++] = (uint8_t)value;
     record[(*offset)++] = (uint8_t)(value >> 8U);
 }
 
+// Le um inteiro little-endian e avanca o cursor do registro.
 static uint16_t decode_u16(const uint8_t *record, size_t *offset)
 {
     uint16_t value = record[*offset];
@@ -65,6 +69,7 @@ static uint16_t decode_u16(const uint8_t *record, size_t *offset)
     return value;
 }
 
+// Armazena CRC em little-endian no final fixo do registro.
 static void encode_crc(uint8_t *record, uint32_t crc)
 {
     record[APP_AMBIENCE_CRC_OFFSET] = (uint8_t)crc;
@@ -73,6 +78,7 @@ static void encode_crc(uint8_t *record, uint32_t crc)
     record[APP_AMBIENCE_CRC_OFFSET + 3U] = (uint8_t)(crc >> 24U);
 }
 
+// Recupera CRC little-endian do registro lido.
 static uint32_t decode_crc(const uint8_t *record)
 {
     return (uint32_t)record[APP_AMBIENCE_CRC_OFFSET] |
@@ -81,6 +87,7 @@ static uint32_t decode_crc(const uint8_t *record)
            ((uint32_t)record[APP_AMBIENCE_CRC_OFFSET + 3U] << 24U);
 }
 
+// Carrega em buffer temporario e publica somente apos magic/versao/CRC/limites validos.
 esp_err_t app_ambience_store_load(app_ambience_curve_t curves[APP_AMBIENCE_CURVE_COUNT],
                                   bool *configured)
 {
@@ -123,6 +130,7 @@ esp_err_t app_ambience_store_load(app_ambience_curve_t curves[APP_AMBIENCE_CURVE
     return ESP_OK;
 }
 
+// Apaga apenas o setor das curvas, grava, relê e compara o registro completo.
 esp_err_t app_ambience_store_save(const app_ambience_curve_t curves[APP_AMBIENCE_CURVE_COUNT],
                                   bool configured)
 {
@@ -166,6 +174,7 @@ esp_err_t app_ambience_store_save(const app_ambience_curve_t curves[APP_AMBIENCE
     return memcmp(record, verify, sizeof(record)) == 0 ? ESP_OK : ESP_ERR_INVALID_CRC;
 }
 
+// Worker com debounce: consome snapshot, grava fora da task de I/O e tenta de novo.
 void app_ambience_store_task(void *argument)
 {
     (void)argument;

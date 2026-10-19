@@ -50,16 +50,17 @@ static const char *TAG = "PROBE_INSTALL";
 // [0] 0x55 | [1] versao | [2] len payload | [3] registrador
 // [4] id/alvo | [5] reservado | [6..7] CRC16 | [8] 0x55
 typedef struct __attribute__((packed)) {
-    uint8_t start;
-    uint8_t version;
-    uint8_t length;
-    uint8_t reg;
-    uint8_t id;
-    uint8_t reserved;
-    uint16_t crc;
-    uint8_t end;
+    uint8_t start;       // Delimitador inicial 0x55.
+    uint8_t version;     // Versao do protocolo.
+    uint8_t length;      // Comprimento do payload, sem cabecalho/CRC.
+    uint8_t reg;         // Registrador/opcode.
+    uint8_t id;          // ID alvo ou broadcast 0xFF.
+    uint8_t reserved;    // Byte reservado, atualmente zero.
+    uint16_t crc;        // CRC16 Modbus do corpo do frame.
+    uint8_t end;         // Delimitador final 0x55.
 } probe_install_frame_t;
 
+// Fases da descoberta e atribuicao sequencial de IDs.
 typedef enum {
     PROBE_STAGE_IDLE = 0,
     PROBE_STAGE_DISCOVERY,
@@ -68,33 +69,33 @@ typedef enum {
 } probe_stage_t;
 
 typedef struct {
-    bool active;
-    probe_stage_t stage;
-    uint8_t current_id;
-    uint8_t completed_count;
-    uint8_t assign_retry_count;
-    uint32_t last_tx_ms;
+    bool active;              // FSM habilitada pela tela de instalacao.
+    probe_stage_t stage;      // Descoberta, ACK pendente ou concluida.
+    uint8_t current_id;       // Proximo ID definitivo (1..4).
+    uint8_t completed_count;  // Quantidade instalada nesta sessao.
+    uint8_t assign_retry_count; // Tentativas para o ID corrente.
+    uint32_t last_tx_ms;      // Base monotonic para descoberta/retry.
 } probe_install_state_t;
 
 // Estado da rotina de desinstalacao redundante:
 // percorre 1..4 por ciclo e repete 3 ciclos para aumentar confiabilidade.
 typedef struct {
-    bool active;
-    bool finished;
-    uint8_t cycle_index;
-    uint8_t target_id;
-    uint32_t last_tx_ms;
-    uint32_t finished_ms;
+    bool active;               // Sequencia controlada pela tela Desinstalar.
+    bool finished;             // Tres ciclos completos.
+    uint8_t cycle_index;       // Ciclos concluidos (0..3).
+    uint8_t target_id;         // ID corrente em 1..4.
+    uint32_t last_tx_ms;       // Temporizacao entre comandos.
+    uint32_t finished_ms;      // Inicio da pausa visual antes do retorno.
 } probe_uninstall_state_t;
 
 // Estrutura de buffer local para monitoramento da tela "Sondas".
 // O campo "installed" define se a UI deve exibir valores reais ou mascara.
 typedef struct {
-    float air_temp;
-    float air_hum;
-    float soil_temp;
-    float soil_hum;
-    bool installed;
+    float air_temp;       // Ultima temperatura do ar decodificada.
+    float air_hum;        // Ultima umidade do ar decodificada.
+    float soil_temp;      // Ultima temperatura do solo decodificada.
+    float soil_hum;       // Ultima umidade do solo decodificada.
+    bool installed;       // Resposta valida recebida para este ID.
 } ProbeData;
 
 typedef enum {
@@ -105,12 +106,12 @@ typedef enum {
 } probe_monitor_stage_t;
 
 typedef struct {
-    bool active;
-    probe_monitor_stage_t stage;
-    uint8_t current_id;
-    uint32_t stage_started_ms;
-    uint32_t scan_completed_ms;
-    ProbeData data[APP_PROBE_COUNT];
+    bool active;                        // Polling ligado pela tela ou automacao do lote.
+    probe_monitor_stage_t stage;        // Enviar, aguardar resposta ou proximo scan.
+    uint8_t current_id;                 // Sonda consultada (1..4).
+    uint32_t stage_started_ms;           // Inicio do timeout/intervalo atual.
+    uint32_t scan_completed_ms;          // Fim do ultimo ciclo completo.
+    ProbeData data[APP_PROBE_COUNT];    // Cache local das quatro respostas.
 } probe_monitor_state_t;
 
 static probe_install_state_t s_probe_state;
@@ -119,6 +120,7 @@ static probe_monitor_state_t s_probe_monitor;
 static bool s_uart_initialized = false;
 
 static bool uart_write_probe_bytes(const uint8_t *buf, size_t len)
+// Troca RS-485 para TX, envia frame completo, aguarda UART e volta a RX.
 {
     if (buf == NULL || len == 0U || !s_uart_initialized) {
         return false;
@@ -150,6 +152,7 @@ static bool uart_write_probe_bytes(const uint8_t *buf, size_t len)
 
 // CRC16 Modbus para proteger frame contra ruido no barramento.
 static uint16_t crc16_modbus(const uint8_t *data, size_t len)
+// CRC16 Modbus little-endian aplicado ao corpo do frame.
 {
     uint16_t crc = 0xFFFFU;
 
@@ -169,6 +172,7 @@ static uint16_t crc16_modbus(const uint8_t *data, size_t len)
 
 // Monta frame generico para qualquer comando (instalar, desinstalar, leitura).
 static size_t build_probe_frame(uint8_t reg, uint8_t id, uint8_t reserved,
+                                // Serializa comando base de nove bytes; zero indica buffer invalido.
                                 uint8_t *out_buf, size_t out_buf_len)
 {
     if (out_buf == NULL || out_buf_len < PROBE_FRAME_TX_SIZE) {
@@ -208,12 +212,14 @@ static size_t build_probe_frame(uint8_t reg, uint8_t id, uint8_t reserved,
 }
 
 static size_t build_probe_uninstall_frame(uint8_t *out_buf, size_t out_buf_len)
+// Comando de reset da sonda para o ID broadcast 0xFF.
 {
     // Reutiliza framing padrao: campo de ID gravado recebe 0xFF (estado virgem).
     return build_probe_frame(PROBE_INSTALL_REGISTER, PROBE_DISCOVERY_ID, 0x00, out_buf, out_buf_len);
 }
 
 static void select_probe_target_address(uint8_t target_id)
+// Ponto de extensao para topologias que selecionem alvo fora do frame.
 {
     // Hook para selecao de endereco fisico/logico fora do payload, se necessario.
     // Nesta versao nao ha camada adicional de enderecamento alem do framing.
@@ -223,6 +229,7 @@ static void select_probe_target_address(uint8_t target_id)
 // Valida delimitadores, tamanho, CRC e extrai registrador/ID/payload.
 // A validacao de "semantica" do comando esperado fica para a FSM chamadora.
 static bool parse_probe_frame(const uint8_t *frame,
+                            // Valida framing, versao, tamanho e CRC; devolve ponteiro para payload no frame.
                               size_t frame_len,
                               uint8_t *out_reg,
                               uint8_t *out_id,
@@ -278,6 +285,7 @@ static bool parse_probe_frame(const uint8_t *frame,
 // - tenta localizar um frame valido dentro do buffer
 // - recorta para o frame encontrado (memmove)
 static bool uart_read_probe_frame(uint8_t *buf, size_t buf_size, size_t *out_len)
+// Le bytes disponiveis sem bloquear e recorta o primeiro frame delimitado.
 {
     if (buf == NULL || out_len == NULL || buf_size < PROBE_FRAME_TX_SIZE) {
         return false;
@@ -318,6 +326,7 @@ static bool uart_read_probe_frame(uint8_t *buf, size_t buf_size, size_t *out_len
 }
 
 void send_probe_discovery(void)
+// Broadcast para sondas sem ID definitivo.
 {
     uint8_t tx_frame[PROBE_FRAME_TX_SIZE] = {0};
     size_t tx_len = build_probe_frame(PROBE_INSTALL_REGISTER, PROBE_DISCOVERY_ID, 0x00,
@@ -330,6 +339,7 @@ void send_probe_discovery(void)
 }
 
 void send_probe_assignment(uint8_t id)
+// Solicita gravacao de ID logico sequencial na sonda encontrada.
 {
     uint8_t tx_frame[PROBE_FRAME_TX_SIZE] = {0};
     size_t tx_len = build_probe_frame(PROBE_INSTALL_REGISTER, id, 0x00,
@@ -343,6 +353,7 @@ void send_probe_assignment(uint8_t id)
 
 // Envia frame de desinstalacao para o alvo corrente, gravando ID 0xFF.
 static void send_probe_uninstall(uint8_t target_id)
+// Envia reset para um alvo especifico, retornando-o ao estado virgem.
 {
     uint8_t tx_frame[PROBE_FRAME_TX_SIZE] = {0};
     size_t tx_len = build_probe_uninstall_frame(tx_frame, sizeof(tx_frame));
@@ -357,6 +368,7 @@ static void send_probe_uninstall(uint8_t target_id)
 
 // Requisita telemetria de um ID especifico (registrador de leitura).
 static void send_probe_read_request(uint8_t id)
+// Consulta telemetria do registrador de leitura do ID informado.
 {
     uint8_t tx_frame[PROBE_FRAME_TX_SIZE] = {0};
     size_t tx_len = build_probe_frame(PROBE_READ_REGISTER, id, 0x00,
@@ -369,6 +381,7 @@ static void send_probe_read_request(uint8_t id)
 }
 
 bool process_probe_response(const uint8_t *payload,
+                            // Converte layout legado/completo para floats; payload curto e rejeitado.
                             size_t payload_len,
                             float *air_temperature,
                             float *air_humidity,
@@ -413,6 +426,7 @@ bool process_probe_response(const uint8_t *payload,
 }
 
 void probe_install_manager_init(void)
+// Configura half-duplex UART1/RS-485 e reinicia os contextos das tres FSMs.
 {
     // Limpa todos os contextos de estado para evitar lixo de boot/reset.
     memset(&s_probe_state, 0, sizeof(s_probe_state));
@@ -447,6 +461,7 @@ void probe_install_manager_init(void)
 }
 
 void probe_monitor_manager_set_active(bool active)
+// Inicia scan desde S1 ou pausa polling sem descartar o ultimo snapshot.
 {
     if (!s_uart_initialized) {
         return;
@@ -486,6 +501,7 @@ void probe_monitor_manager_set_active(bool active)
 }
 
 void probe_install_manager_set_active(bool active)
+// Entrada na tela inicia descoberta; saida pausa sem reverter IDs gravados.
 {
     if (!s_uart_initialized) {
         return;
@@ -511,6 +527,7 @@ void probe_install_manager_set_active(bool active)
 }
 
 void probe_uninstall_manager_set_active(bool active)
+// Entrada inicializa os tres ciclos; saida interrompe a rotina corrente.
 {
     if (!s_uart_initialized) {
         return;
@@ -534,6 +551,7 @@ void probe_uninstall_manager_set_active(bool active)
 }
 
 void probe_install_manager_periodic(uint32_t now_ms)
+// Avanca descoberta, atribuicao, retries e conclusao sem espera bloqueante.
 {
     if (!s_uart_initialized || !s_probe_state.active) {
         return;
@@ -639,6 +657,7 @@ void probe_install_manager_periodic(uint32_t now_ms)
 }
 
 void probe_monitor_manager_periodic(uint32_t now_ms)
+// Consulta S1..S4, aplica timeout de 100 ms e inicia novo scan periodico.
 {
     if (!s_uart_initialized || !s_probe_monitor.active) {
         return;
@@ -746,6 +765,7 @@ void probe_monitor_manager_periodic(uint32_t now_ms)
 }
 
 void run_uninstall_sequence(uint32_t now_ms)
+// Reseta IDs 1..4 em tres ciclos e retorna ao menu apos feedback visual.
 {
     if (!s_uart_initialized || !s_uninstall_state.active) {
         return;

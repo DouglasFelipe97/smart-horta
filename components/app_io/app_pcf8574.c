@@ -8,10 +8,12 @@
 
 #define PCF8574_WRITE_TIMEOUT_TICKS pdMS_TO_TICKS(100)
 
+// Shadow do ultimo byte confirmado; mutex serializa mudancas de bits entre tasks.
 static uint8_t output_levels = 0xFFU;
 static bool initialized;
 static SemaphoreHandle_t output_mutex;
 
+// Cria mutex e inicializa P0..P6 inativos, mantendo P7 sem uso em HIGH.
 esp_err_t app_pcf8574_init(void)
 {
     if (output_mutex == NULL) {
@@ -37,6 +39,7 @@ esp_err_t app_pcf8574_init(void)
     return err;
 }
 
+// Atualiza um bit e reenvia o byte inteiro sob mutex para preservar os demais.
 esp_err_t app_pcf8574_write_output(app_pcf8574_output_t output, bool high)
 {
     if ((unsigned)output >= (unsigned)APP_OUTPUT_COUNT) {

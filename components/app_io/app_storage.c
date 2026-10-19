@@ -12,24 +12,28 @@
 #define APP_STORAGE_TASK_PRIORITY      4
 #define APP_STORAGE_QUEUE_WAIT_MS      1000
 
+// Operacoes aceitas pela fila unica que serializa o barramento SPI.
 typedef enum {
     APP_STORAGE_OP_READ,
     APP_STORAGE_OP_WRITE,
     APP_STORAGE_OP_ERASE,
 } app_storage_operation_t;
 
+// Pedido vive na pilha do chamador ate o semaforo completed ser sinalizado.
 typedef struct {
-    app_storage_operation_t operation;
-    uint32_t address;
-    void *buffer;
-    size_t size;
-    esp_err_t result;
-    SemaphoreHandle_t completed;
+    app_storage_operation_t operation; // Leitura, escrita ou erase.
+    uint32_t address;                  // Endereco em bytes na AT25.
+    void *buffer;                      // Buffer emprestado ate completar a operacao.
+    size_t size;                       // Bytes para read/write; ignorado em erase.
+    esp_err_t result;                  // Resultado produzido pelo worker.
+    SemaphoreHandle_t completed;       // Sinaliza retorno ao chamador sincrono.
 } app_storage_request_t;
 
+// Fila/workers sao unicos para impedir intercalacao de comandos SPI.
 static QueueHandle_t s_request_queue;
 static bool s_initialized;
 
+// Worker unico: executa cada pedido na flash e devolve o resultado ao chamador.
 static void storage_task(void *argument)
 {
     (void)argument;
@@ -59,6 +63,7 @@ static void storage_task(void *argument)
     }
 }
 
+// Enfileira um pedido e bloqueia apenas o chamador ate a operacao terminar.
 static esp_err_t submit_request(app_storage_request_t *request)
 {
     if (!s_initialized) {
@@ -80,6 +85,7 @@ static esp_err_t submit_request(app_storage_request_t *request)
     return request->result;
 }
 
+// Inicializa driver AT25, fila e worker; deve ocorrer antes de read/write/erase.
 esp_err_t app_storage_init(void)
 {
     if (s_initialized) {
@@ -110,6 +116,7 @@ esp_err_t app_storage_init(void)
     return ESP_OK;
 }
 
+// Fachada sincrona de leitura com validacao de buffer e tamanho.
 esp_err_t app_storage_read(uint32_t address, void *data, size_t size)
 {
     if (data == NULL || size == 0) {
@@ -124,6 +131,7 @@ esp_err_t app_storage_read(uint32_t address, void *data, size_t size)
     return submit_request(&request);
 }
 
+// Fachada sincrona de escrita; buffer deve permanecer valido ate retornar.
 esp_err_t app_storage_write(uint32_t address, const void *data, size_t size)
 {
     if (data == NULL || size == 0) {
@@ -138,6 +146,7 @@ esp_err_t app_storage_write(uint32_t address, const void *data, size_t size)
     return submit_request(&request);
 }
 
+// Fachada sincrona para apagar um setor alinhado de 4 KiB.
 esp_err_t app_storage_erase_sector(uint32_t address)
 {
     app_storage_request_t request = {

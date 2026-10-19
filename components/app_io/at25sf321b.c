@@ -16,8 +16,10 @@
 #define AT25_STATUS_TIMEOUT_MS    10000U
 #define AT25_MAX_READ_CHUNK       256U
 
+// Dispositivo SPI compartilhado; o acesso externo e serializado por app_storage.
 static spi_device_handle_t s_flash_device;
 
+// Transmite um comando SPI completo usando o dispositivo ja inicializado.
 static esp_err_t transmit_bytes(const uint8_t *tx_data, size_t size)
 {
     spi_transaction_t transaction = {
@@ -27,12 +29,14 @@ static esp_err_t transmit_bytes(const uint8_t *tx_data, size_t size)
     return spi_device_transmit(s_flash_device, &transaction);
 }
 
+// Libera a flash para a proxima operacao que modifica memoria.
 static esp_err_t write_enable(void)
 {
     const uint8_t command = AT25_CMD_WRITE_ENABLE;
     return transmit_bytes(&command, sizeof(command));
 }
 
+// Le o registrador de estado e devolve o byte de status ao chamador.
 static esp_err_t read_status(uint8_t *status)
 {
     uint8_t tx_data[] = {AT25_CMD_READ_STATUS, 0xFF};
@@ -49,6 +53,7 @@ static esp_err_t read_status(uint8_t *status)
     return err;
 }
 
+// Aguarda BUSY limpar ou retorna timeout/erro SPI.
 static esp_err_t wait_until_ready(void)
 {
     TickType_t timeout_ticks = pdMS_TO_TICKS(AT25_STATUS_TIMEOUT_MS);
@@ -71,6 +76,7 @@ static esp_err_t wait_until_ready(void)
     return ESP_ERR_TIMEOUT;
 }
 
+// Codifica opcode e endereco de 24 bits no cabecalho de comando SPI.
 static void encode_address(uint8_t *command, uint8_t opcode, uint32_t address)
 {
     command[0] = opcode;
@@ -79,12 +85,14 @@ static void encode_address(uint8_t *command, uint8_t opcode, uint32_t address)
     command[3] = (uint8_t)address;
 }
 
+// Evita overflow e acessos que ultrapassem os 4 MiB da memoria.
 static bool address_range_is_valid(uint32_t address, size_t size)
 {
     return size > 0 && address < AT25SF321B_CAPACITY_BYTES &&
            size <= AT25SF321B_CAPACITY_BYTES - address;
 }
 
+// Inicializa SPI2, registra o dispositivo e confirma resposta do comando READ ID.
 esp_err_t at25sf321b_init(void)
 {
     spi_bus_config_t bus_config = {
@@ -132,6 +140,7 @@ esp_err_t at25sf321b_init(void)
     return err;
 }
 
+// Remove dispositivo e libera o barramento SPI alocado pelo driver.
 void at25sf321b_deinit(void)
 {
     if (s_flash_device != NULL) {
@@ -141,6 +150,7 @@ void at25sf321b_deinit(void)
     spi_bus_free(APP_FLASH_SPI_HOST);
 }
 
+// Le em blocos limitados pelo buffer de transferencia do driver.
 esp_err_t at25sf321b_read(uint32_t address, void *data, size_t size)
 {
     if (data == NULL || !address_range_is_valid(address, size)) {
@@ -173,6 +183,7 @@ esp_err_t at25sf321b_read(uint32_t address, void *data, size_t size)
     return ESP_OK;
 }
 
+// Divide escrita em paginas de 256 bytes, habilitando e aguardando cada pagina.
 esp_err_t at25sf321b_write(uint32_t address, const void *data, size_t size)
 {
     if (data == NULL || !address_range_is_valid(address, size)) {
@@ -215,6 +226,7 @@ esp_err_t at25sf321b_write(uint32_t address, const void *data, size_t size)
     return ESP_OK;
 }
 
+// Apaga setor alinhado de 4 KiB apos write-enable e espera conclusao.
 esp_err_t at25sf321b_erase_sector(uint32_t address)
 {
     if (address >= AT25SF321B_CAPACITY_BYTES ||

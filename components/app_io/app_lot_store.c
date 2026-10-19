@@ -11,11 +11,13 @@
 
 static const uint8_t s_lot_magic[4] = {'S', 'H', 'L', 'T'};
 
+// Predicado gregoriano compartilhado pela validacao de datas persistidas.
 static bool is_leap_year(uint16_t year)
 {
     return ((year % 4U) == 0U && (year % 100U) != 0U) || ((year % 400U) == 0U);
 }
 
+// Retorna dias do mes; mes fora de 1..12 e tratado como invalido (zero).
 static uint8_t days_in_month(uint16_t year, uint8_t month)
 {
     static const uint8_t month_days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
@@ -28,6 +30,7 @@ static uint8_t days_in_month(uint16_t year, uint8_t month)
     return month_days[month - 1U];
 }
 
+// Impede que um registro corrompido restaure uma data fora de faixa.
 static bool datetime_is_valid(const app_datetime_t *datetime)
 {
     return datetime != NULL && datetime->year >= 2000U && datetime->year <= 2099U &&
@@ -36,6 +39,7 @@ static bool datetime_is_valid(const app_datetime_t *datetime)
            datetime->hour <= 23U && datetime->minute <= 59U && datetime->second <= 59U;
 }
 
+// CRC32 cobre cabecalho e payload, sem incluir os quatro bytes do proprio CRC.
 static uint32_t calculate_crc32(const uint8_t *data, size_t size)
 {
     uint32_t crc = 0xFFFFFFFFU;
@@ -48,6 +52,7 @@ static uint32_t calculate_crc32(const uint8_t *data, size_t size)
     return ~crc;
 }
 
+// Escreve CRC little-endian no deslocamento fixo do formato do lote.
 static void encode_crc(uint8_t *record, uint32_t crc)
 {
     record[APP_LOT_RECORD_CRC_OFFSET] = (uint8_t)crc;
@@ -56,6 +61,7 @@ static void encode_crc(uint8_t *record, uint32_t crc)
     record[APP_LOT_RECORD_CRC_OFFSET + 3U] = (uint8_t)(crc >> 24U);
 }
 
+// Decodifica o CRC armazenado para comparar com o valor calculado.
 static uint32_t decode_crc(const uint8_t *record)
 {
     return (uint32_t)record[APP_LOT_RECORD_CRC_OFFSET] |
@@ -64,6 +70,7 @@ static uint32_t decode_crc(const uint8_t *record)
            ((uint32_t)record[APP_LOT_RECORD_CRC_OFFSET + 3U] << 24U);
 }
 
+// Restaura a data de inicio somente se formato, CRC e calendario forem validos.
 esp_err_t app_lot_store_load(app_datetime_t *start_datetime)
 {
     if (start_datetime == NULL) {
@@ -100,6 +107,7 @@ esp_err_t app_lot_store_load(app_datetime_t *start_datetime)
     return ESP_OK;
 }
 
+// Atualiza o setor reservado e verifica a escrita relendo os bytes gravados.
 esp_err_t app_lot_store_save(const app_datetime_t *start_datetime)
 {
     if (!datetime_is_valid(start_datetime)) {
@@ -136,6 +144,7 @@ esp_err_t app_lot_store_save(const app_datetime_t *start_datetime)
     return memcmp(record, verify, sizeof(record)) == 0 ? ESP_OK : ESP_ERR_INVALID_CRC;
 }
 
+// Apaga somente o setor do lote; nao toca no setor das curvas de ambiencia.
 esp_err_t app_lot_store_clear(void)
 {
     return app_storage_erase_sector(APP_LOT_RECORD_ADDRESS);

@@ -26,6 +26,7 @@ static const char *TAG_LCD = "DISPLAY_TASK";
 // Isso facilita manutencao: alterar layout de uma tela nao afeta as outras.
 // -----------------------------------------------------------------------------
 
+// Desenha medias validas, alarmes, relogio e status/idade do lote na HOME.
 static void draw_home(u8g2_t *u8g2, const app_state_snapshot_t *st)
 {
     char line[32];
@@ -106,6 +107,7 @@ static void draw_home(u8g2_t *u8g2, const app_state_snapshot_t *st)
     u8g2_DrawStr(u8g2, 2, 62, line);
 }
 
+// Renderiza cursor do menu principal; navegacao permanece no app_model.
 static void draw_main_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
 {
     static const char *items[] = {"Ajustes", "Relatorios", "Sobre"};
@@ -121,6 +123,7 @@ static void draw_main_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
     }
 }
 
+// Tela temporaria para areas sem fluxo funcional, como Relatorios.
 static void draw_placeholder_screen(u8g2_t *u8g2, const char *title)
 {
     u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
@@ -130,6 +133,7 @@ static void draw_placeholder_screen(u8g2_t *u8g2, const char *title)
     u8g2_DrawStr(u8g2, 2, 50, "BACK = voltar");
 }
 
+// Formata leitura ou placeholder respeitando o espaco reduzido de cada linha.
 static void format_probe_value(char *out, size_t out_len, bool has_value, float value)
 {
     if (!has_value) {
@@ -140,6 +144,7 @@ static void format_probe_value(char *out, size_t out_len, bool has_value, float 
     snprintf(out, out_len, "%2.0f", value);
 }
 
+// Barra ciclica animada enquanto a FSM de descoberta esta executando.
 static void draw_install_progress_indicator(u8g2_t *u8g2)
 {
     static uint8_t phase = 0;
@@ -163,6 +168,7 @@ static void draw_install_progress_indicator(u8g2_t *u8g2)
     phase = (uint8_t)((phase + 1U) % segments);
 }
 
+// Desenha quatro slots com leituras de ar/solo ou placeholders sem leitura.
 static void draw_probe_rows(u8g2_t *u8g2, const app_state_snapshot_t *st)
 {
     char line[32];
@@ -192,6 +198,7 @@ static void draw_probe_rows(u8g2_t *u8g2, const app_state_snapshot_t *st)
     }
 }
 
+// Renderiza Ajustes e subfluxos de lote, data, Ambiencia, buzzer e sondas.
 static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
 {
     static const char *items[] = {"Lote", "Data", "Ambiencia", "Buzzer", "Instalar Sondas"};
@@ -407,6 +414,7 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
     }
 }
 
+// Desenha informacoes estaticas de identificacao da aplicacao.
 static void draw_about_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
 {
     (void)st;
@@ -420,6 +428,7 @@ static void draw_about_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
     u8g2_DrawStr(u8g2, 2, 60, "BACK = voltar");
 }
 
+// Despacha para o renderer da tela corrente, sem alterar o snapshot.
 static void draw_screen(u8g2_t *u8g2, const app_state_snapshot_t *st)
 {
     // Dispatcher de tela: escolhe qual layout desenhar conforme estado atual.
@@ -454,6 +463,7 @@ static void draw_screen(u8g2_t *u8g2, const app_state_snapshot_t *st)
 
 // Esta funcao e um callback exigido pelo u8g2 para abstrair GPIO e delays.
 // Em resumo: o u8g2 manda uma "mensagem" (msg) e aqui traduzimos para ESP32.
+// Traduz mensagens u8g2 em sinais GPIO ST7920 e atrasos do FreeRTOS.
 uint8_t u8x8_gpio_and_delay_esp32(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr)
 {
     // Parametros nao usados diretamente neste callback.
@@ -512,6 +522,7 @@ uint8_t u8x8_gpio_and_delay_esp32(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, vo
     return 1;
 }
 
+// Inicializa o ST7920 e repinta snapshots do modelo a cada 90 ms.
 void display_task(void *pvParameters)
 {
     (void)pvParameters;

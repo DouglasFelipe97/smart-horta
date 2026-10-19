@@ -11,7 +11,8 @@
 // ------------------------------
 // Mapa de pinos da aplicacao
 // ------------------------------
-// Dica: se mudar qualquer fio no hardware, ajuste primeiro este arquivo.
+// Fonte unica para fios e perifericos da placa. Atualize docs/MAPEAMENTO_PINOS.md
+// junto com qualquer alteracao de hardware.
 
 //INPUTS
 #define APP_IN_1_PIN            GPIO_NUM_34
@@ -41,8 +42,9 @@
 #define APP_RTC_I2C_SCL_PIN      GPIO_NUM_22
 #define APP_RTC_I2C_FREQ_HZ      100000
 
-// PCF8574 no mesmo barramento I2C do RTC. Ajuste conforme A0-A2 do modulo.
+// PCF8574 compartilha I2C com o DS3231; endereco depende de A0-A2.
 #define APP_PCF8574_I2C_ADDR     0x20
+// Polaridade confirmada para os drivers conectados: HIGH liga, LOW desliga.
 #define APP_PCF8574_ACTIVE_HIGH  1
 
 // ------------------------------
@@ -76,6 +78,7 @@
 #define APP_PWM_FREQUENCY_HZ     2000
 #define APP_PWM_MAX_DUTY         ((1U << 10) - 1U)
 
+// Configuradores de GPIO/ADC/I2C; app_config_pins agrupa GPIOs e ADC locais.
 void app_configure_gpio_inputs(void);
 
 void app_configure_gpio_leds(void);
