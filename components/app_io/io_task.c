@@ -66,10 +66,13 @@ void io_task(void *pvParameters){
         probe_monitor_manager_periodic(now_ms);
 
         app_datetime_t lot_start_datetime;
-        if (app_model_take_lot_write_request(&lot_start_datetime)) {
-            esp_err_t err = app_lot_store_save(&lot_start_datetime);
+        bool lot_started;
+        if (app_model_take_lot_write_request(&lot_start_datetime, &lot_started)) {
+            esp_err_t err = lot_started
+                ? app_lot_store_save(&lot_start_datetime)
+                : app_lot_store_clear();
             if (err != ESP_OK) {
-                ESP_LOGE(TAG_IO, "Falha ao persistir inicio do lote: %s", esp_err_to_name(err));
+                ESP_LOGE(TAG_IO, "Falha ao persistir estado do lote: %s", esp_err_to_name(err));
             }
         }
 

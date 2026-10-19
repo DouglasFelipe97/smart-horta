@@ -25,6 +25,8 @@ typedef enum {
     APP_LOT_MODE_MENU,
     APP_LOT_MODE_EDIT,
     APP_LOT_MODE_CONFIRMED,
+    APP_LOT_MODE_FINISH_CONFIRM,
+    APP_LOT_MODE_FINISHED,
 } app_lot_mode_t;
 
 typedef enum {
@@ -127,7 +129,7 @@ void app_model_set_datetime(const app_datetime_t *dt);
 void app_model_set_lot_state(bool started, const app_datetime_t *start_datetime);
 
 // Consome o pedido para persistir um lote confirmado.
-bool app_model_take_lot_write_request(app_datetime_t *start_datetime);
+bool app_model_take_lot_write_request(app_datetime_t *start_datetime, bool *started);
 
 // Entrega uma solicitacao pendente de escrita no RTC e limpa o flag.
 bool app_model_take_rtc_write_request(app_datetime_t *dt);

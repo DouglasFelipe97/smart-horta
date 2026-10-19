@@ -34,6 +34,7 @@ typedef struct {
     app_datetime_t datetime;
     app_datetime_t edit_datetime;
     bool lot_write_pending;
+    bool lot_write_started;
     bool rtc_write_pending;
     uint32_t last_user_interaction_ms;
 } app_model_data_t;
@@ -359,21 +360,24 @@ void app_model_set_lot_state(bool started, const app_datetime_t *start_datetime)
     if (started) {
         s_model.lot_start_datetime = *start_datetime;
         normalize_datetime(&s_model.lot_start_datetime);
+    } else {
+        memset(&s_model.lot_start_datetime, 0, sizeof(s_model.lot_start_datetime));
     }
     unlock_model();
 }
 
-bool app_model_take_lot_write_request(app_datetime_t *start_datetime)
+bool app_model_take_lot_write_request(app_datetime_t *start_datetime, bool *started)
 {
     bool has_request = false;
 
-    if (start_datetime == NULL) {
+    if (start_datetime == NULL || started == NULL) {
         return false;
     }
 
     lock_model();
     if (s_model.lot_write_pending) {
         *start_datetime = s_model.lot_start_datetime;
+        *started = s_model.lot_write_started;
         s_model.lot_write_pending = false;
         has_request = true;
     }
@@ -525,10 +529,14 @@ void app_model_process_key(app_key_t key)
             } else if (s_model.settings_lot_mode != APP_LOT_MODE_NONE) {
                 if (s_model.settings_lot_mode == APP_LOT_MODE_MENU) {
                     if (key == APP_KEY_ENTER) {
-                        s_model.edit_lot_datetime = s_model.datetime;
-                        s_model.edit_lot_datetime.second = 0;
-                        s_model.datetime_field_index = 0;
-                        s_model.settings_lot_mode = APP_LOT_MODE_EDIT;
+                        if (s_model.lot_started) {
+                            s_model.settings_lot_mode = APP_LOT_MODE_FINISH_CONFIRM;
+                        } else {
+                            s_model.edit_lot_datetime = s_model.datetime;
+                            s_model.edit_lot_datetime.second = 0;
+                            s_model.datetime_field_index = 0;
+                            s_model.settings_lot_mode = APP_LOT_MODE_EDIT;
+                        }
                     } else if (key == APP_KEY_BACK) {
                         s_model.settings_lot_mode = APP_LOT_MODE_NONE;
                     }
@@ -545,11 +553,25 @@ void app_model_process_key(app_key_t key)
                             s_model.lot_start_datetime = s_model.edit_lot_datetime;
                             s_model.lot_started = true;
                             s_model.lot_write_pending = true;
+                            s_model.lot_write_started = true;
                             s_model.settings_lot_mode = APP_LOT_MODE_CONFIRMED;
                         }
                     } else if (key == APP_KEY_BACK) {
                         s_model.settings_lot_mode = APP_LOT_MODE_MENU;
                     }
+                } else if (s_model.settings_lot_mode == APP_LOT_MODE_FINISH_CONFIRM) {
+                    if (key == APP_KEY_ENTER) {
+                        s_model.lot_started = false;
+                        memset(&s_model.lot_start_datetime, 0, sizeof(s_model.lot_start_datetime));
+                        s_model.lot_write_pending = true;
+                        s_model.lot_write_started = false;
+                        s_model.settings_lot_mode = APP_LOT_MODE_FINISHED;
+                    } else if (key == APP_KEY_BACK) {
+                        s_model.settings_lot_mode = APP_LOT_MODE_MENU;
+                    }
+                } else if (s_model.settings_lot_mode == APP_LOT_MODE_FINISHED &&
+                           (key == APP_KEY_ENTER || key == APP_KEY_BACK)) {
+                    s_model.settings_lot_mode = APP_LOT_MODE_MENU;
                 } else if (s_model.settings_lot_mode == APP_LOT_MODE_CONFIRMED &&
                            (key == APP_KEY_ENTER || key == APP_KEY_BACK)) {
                     s_model.settings_lot_mode = APP_LOT_MODE_MENU;

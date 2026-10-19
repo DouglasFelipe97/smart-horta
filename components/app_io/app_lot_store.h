@@ -6,5 +6,6 @@
 
 esp_err_t app_lot_store_load(app_datetime_t *start_datetime);
 esp_err_t app_lot_store_save(const app_datetime_t *start_datetime);
+esp_err_t app_lot_store_clear(void);
 
 #endif

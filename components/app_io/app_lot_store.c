@@ -135,3 +135,8 @@ esp_err_t app_lot_store_save(const app_datetime_t *start_datetime)
     }
     return memcmp(record, verify, sizeof(record)) == 0 ? ESP_OK : ESP_ERR_INVALID_CRC;
 }
+
+esp_err_t app_lot_store_clear(void)
+{
+    return app_storage_erase_sector(APP_LOT_RECORD_ADDRESS);
+}

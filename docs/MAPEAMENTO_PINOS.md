@@ -59,7 +59,8 @@ restricoes da placa antes de conectar; os defines ficam em `app_pin_config.h`.
 
 A AT25SF321B possui 4 MiB. O ultimo setor de 4 KiB, no endereco `0x3FF000`, fica
 reservado para data/hora de inicio e flag do lote. O registro usa versao e CRC;
-os demais setores permanecem disponiveis para futuras configuracoes e relatorios.
+ao finalizar o lote, esse setor e apagado. Os demais setores permanecem disponiveis
+para futuras configuracoes e relatorios.
 
 ## Sondas RS-485 (MAX485)
 

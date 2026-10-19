@@ -237,7 +237,7 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
         snprintf(line, sizeof(line), "%02u:%02u:%02u", st->datetime.hour, st->datetime.minute, st->datetime.second);
         u8g2_DrawStr(u8g2, 2, 58, line);
     } else if (st->settings_lot_mode == APP_LOT_MODE_MENU) {
-        u8g2_DrawStr(u8g2, 2, 24, ">Iniciar Lote");
+        u8g2_DrawStr(u8g2, 2, 24, st->lot_started ? ">Finalizar Lote" : ">Iniciar Lote");
         if (st->lot_started) {
             const char *status = st->lot_status == APP_LOT_STATUS_SCHEDULED ? "Agendado" : "Ja iniciado";
             snprintf(line, sizeof(line), "Atual: %s", status);
@@ -263,6 +263,21 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
         snprintf(line, sizeof(line), "%02u:%02u",
                  st->lot_start_datetime.hour, st->lot_start_datetime.minute);
         u8g2_DrawStr(u8g2, 2, 52, line);
+        u8g2_DrawStr(u8g2, 2, 62, "OK/BACK: voltar");
+    } else if (st->settings_lot_mode == APP_LOT_MODE_FINISH_CONFIRM) {
+        u8g2_DrawStr(u8g2, 2, 24, "Finalizar lote?");
+        snprintf(line, sizeof(line), "%02u/%02u/%04u",
+                 st->lot_start_datetime.day,
+                 st->lot_start_datetime.month,
+                 st->lot_start_datetime.year);
+        u8g2_DrawStr(u8g2, 2, 40, line);
+        snprintf(line, sizeof(line), "%02u:%02u",
+                 st->lot_start_datetime.hour, st->lot_start_datetime.minute);
+        u8g2_DrawStr(u8g2, 2, 52, line);
+        u8g2_DrawStr(u8g2, 2, 62, "OK=sim BACK=nao");
+    } else if (st->settings_lot_mode == APP_LOT_MODE_FINISHED) {
+        u8g2_DrawStr(u8g2, 2, 24, "LOTE FINALIZADO");
+        u8g2_DrawStr(u8g2, 2, 40, "Idade: 0 dias");
         u8g2_DrawStr(u8g2, 2, 62, "OK/BACK: voltar");
     } else if (st->settings_temperature_mode == 1) {
         u8g2_DrawStr(u8g2, 2, 22, "> Temperaturas");
