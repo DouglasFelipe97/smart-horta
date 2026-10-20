@@ -7,6 +7,8 @@
 #include "u8g2.h"
 #include "app_pin_config.h"
 #include "app_model.h"
+#include "app_alarm_monitor.h"
+#include "app_alarm_store.h"
 #include "display_task.h"
 
 static const char *TAG_LCD = "DISPLAY_TASK";
@@ -17,21 +19,90 @@ static const char *TAG_LCD = "DISPLAY_TASK";
 // Isso facilita manutencao: alterar layout de uma tela nao afeta as outras.
 // -----------------------------------------------------------------------------
 
+// Desenha medias validas, alarmes, relogio e status/idade do lote na HOME.
 static void draw_home(u8g2_t *u8g2, const app_state_snapshot_t *st)
 {
     char line[32];
-    static const char *days_of_week[] = {"none", "Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"};   
+    uint8_t samples = 0;
+    uint8_t alarms = 0;
+    float sum_air_t = 0.0f;
+    float sum_air_u = 0.0f;
+    float sum_soil_t = 0.0f;
+    float sum_soil_u = 0.0f;
+
+    // HOME considera apenas sondas instaladas com leitura valida
+    // para compor medias e contagem de alarmes ativos.
+    for (int i = 0; i < APP_PROBE_COUNT; i++) {
+        if (!st->probes[i].installed || !st->probes[i].has_reading) {
+            continue;
+        }
+
+        sum_air_t += st->probes[i].air_temperature;
+        sum_air_u += st->probes[i].air_humidity;
+        sum_soil_t += st->probes[i].soil_temperature;
+        sum_soil_u += st->probes[i].soil_humidity;
+        samples++;
+
+        bool probe_alarm =
+            (st->probes[i].air_temperature < APP_ALARM_AIR_TEMPERATURE_MIN_C) ||
+            (st->probes[i].air_temperature > APP_ALARM_AIR_TEMPERATURE_MAX_C) ||
+            (st->probes[i].air_humidity < APP_ALARM_AIR_HUMIDITY_MIN_PCT) ||
+            (st->probes[i].air_humidity > APP_ALARM_AIR_HUMIDITY_MAX_PCT) ||
+            (st->probes[i].soil_temperature < APP_ALARM_SOIL_TEMPERATURE_MIN_C) ||
+            (st->probes[i].soil_temperature > APP_ALARM_SOIL_TEMPERATURE_MAX_C) ||
+            (st->probes[i].soil_humidity < APP_ALARM_SOIL_HUMIDITY_MIN_PCT) ||
+            (st->probes[i].soil_humidity > APP_ALARM_SOIL_HUMIDITY_MAX_PCT);
+
+        if (probe_alarm) {
+            alarms++;
+        }
+    }
 
     u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
 
-    snprintf(line, sizeof(line), "%s %02u/%02u/%04u", days_of_week[st->datetime.weekday], st->datetime.day, st->datetime.month, st->datetime.year);
-    u8g2_DrawStr(u8g2, 3, 10, line);
+    if (st->ambience_alarm_active) {
+        alarms++;
+    }
+    if (alarms > 0U) {
+        snprintf(line, sizeof(line), "ALARMES ATIVOS: %u", alarms);
+    } else {
+        snprintf(line, sizeof(line), "Alarmes ativos: 0");
+    }
+    u8g2_DrawStr(u8g2, 2, 10, line);
 
-    snprintf(line, sizeof(line), "%02u:%02u", st->datetime.hour, st->datetime.minute);
-    u8g2_DrawStr(u8g2, 92, 10, line);
+    snprintf(line, sizeof(line), "%02u/%02u/%04u %02u:%02u",
+             st->datetime.day,
+             st->datetime.month,
+             st->datetime.year,
+             st->datetime.hour,
+             st->datetime.minute);
+    u8g2_DrawStr(u8g2, 2, 22, line);
 
+    if (samples > 0U) {
+        snprintf(line, sizeof(line), "Ar  T:%4.1f U:%4.1f",
+                 sum_air_t / (float)samples,
+                 sum_air_u / (float)samples);
+        u8g2_DrawStr(u8g2, 2, 36, line);
+
+        snprintf(line, sizeof(line), "Solo T:%4.1f U:%4.1f",
+                 sum_soil_t / (float)samples,
+                 sum_soil_u / (float)samples);
+        u8g2_DrawStr(u8g2, 2, 50, line);
+    } else {
+        u8g2_DrawStr(u8g2, 2, 36, "Ar  T:--.- U:--.-");
+        u8g2_DrawStr(u8g2, 2, 50, "Solo T:--.- U:--.-");
+    }
+    if (st->lot_status == APP_LOT_STATUS_ACTIVE) {
+        snprintf(line, sizeof(line), "Lote: ATIVO %lu d", (unsigned long)st->lot_age_days);
+    } else if (st->lot_status == APP_LOT_STATUS_SCHEDULED) {
+        snprintf(line, sizeof(line), "Lote: AGENDADO");
+    } else {
+        snprintf(line, sizeof(line), "Lote: INATIVO");
+    }
+    u8g2_DrawStr(u8g2, 2, 62, line);
 }
 
+// Renderiza cursor do menu principal; navegacao permanece no app_model.
 static void draw_main_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
 {
     static const char *items[] = {"Ajustes", "Relatorios", "Sobre"};
@@ -47,6 +118,7 @@ static void draw_main_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
     }
 }
 
+// Tela temporaria para areas sem fluxo funcional, como Relatorios.
 static void draw_placeholder_screen(u8g2_t *u8g2, const char *title)
 {
     u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
@@ -56,26 +128,148 @@ static void draw_placeholder_screen(u8g2_t *u8g2, const char *title)
     u8g2_DrawStr(u8g2, 2, 50, "BACK = voltar");
 }
 
-static void format_probe_value(char *out, size_t out_len, bool has_value, float value)
+// Converte o codigo persistido em um nome curto que cabe na tela 128x64.
+static const char *alarm_name(app_alarm_type_t type)
 {
-    if (!has_value) {
-        snprintf(out, out_len, "--.-");
+    switch (type) {
+        case APP_ALARM_AIR_TEMPERATURE_LOW: return "Temp. ar baixa";
+        case APP_ALARM_AIR_TEMPERATURE_HIGH: return "Temp. ar alta";
+        case APP_ALARM_AIR_HUMIDITY_LOW: return "Umid. ar baixa";
+        case APP_ALARM_AIR_HUMIDITY_HIGH: return "Umid. ar alta";
+        case APP_ALARM_SOIL_TEMPERATURE_LOW: return "Temp. solo baixa";
+        case APP_ALARM_SOIL_TEMPERATURE_HIGH: return "Temp. solo alta";
+        case APP_ALARM_SOIL_HUMIDITY_LOW: return "Umid. solo baixa";
+        case APP_ALARM_SOIL_HUMIDITY_HIGH: return "Umid. solo alta";
+        case APP_ALARM_AMBIENCE_AIR_HOT: return "T. ar alta (meta)";
+        case APP_ALARM_AMBIENCE_AIR_DRY: return "U. ar baixa (meta)";
+        case APP_ALARM_AMBIENCE_AIR_HUMID: return "U. ar alta (meta)";
+        case APP_ALARM_AMBIENCE_SOIL_DRY: return "U. solo baixa(meta)";
+        default: return "Alarme desconhecido";
+    }
+}
+
+// Mostra um evento por vez, partindo do mais recente para o mais antigo.
+static void draw_reports(u8g2_t *u8g2, const app_state_snapshot_t *st)
+{
+    char line[32];
+    app_alarm_event_t event;
+
+    u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
+    u8g2_DrawStr(u8g2, 2, 10, "RELATORIOS");
+    if (st->report_count == 0U) {
+        u8g2_DrawHLine(u8g2, 0, 12, 128);
+        u8g2_DrawStr(u8g2, 2, 36, "Sem alarmes");
         return;
     }
 
-    snprintf(out, out_len, "%4.1f", value);
+    snprintf(line, sizeof(line), "%u/%u",
+             (unsigned)(st->report_index + 1U), (unsigned)st->report_count);
+    u8g2_DrawStr(u8g2, 84, 10, line);
+    u8g2_DrawHLine(u8g2, 0, 12, 128);
+
+    uint16_t chronological_index = (uint16_t)(st->report_count - 1U - st->report_index);
+    if (app_alarm_store_get(chronological_index, &event) != ESP_OK) {
+        u8g2_DrawStr(u8g2, 2, 36, "Falha ao ler alarme");
+        return;
+    }
+
+    snprintf(line, sizeof(line), "%s S%u", alarm_name(event.type), (unsigned)event.probe_id);
+    u8g2_DrawStr(u8g2, 2, 27, line);
+    snprintf(line, sizeof(line), "%02u/%02u/%04u %02u:%02u",
+             event.datetime.day, event.datetime.month, event.datetime.year,
+             event.datetime.hour, event.datetime.minute);
+    u8g2_DrawStr(u8g2, 2, 42, line);
+    snprintf(line, sizeof(line), "Idade: %lu dias", (unsigned long)event.lot_age_days);
+    u8g2_DrawStr(u8g2, 2, 57, line);
 }
 
+// Formata leitura ou placeholder respeitando o espaco reduzido de cada linha.
+static void format_probe_value(char *out, size_t out_len, bool has_value, float value)
+{
+    if (!has_value) {
+        snprintf(out, out_len, "--");
+        return;
+    }
+
+    snprintf(out, out_len, "%2.0f", value);
+}
+
+// Barra ciclica animada enquanto a FSM de descoberta esta executando.
+static void draw_install_progress_indicator(u8g2_t *u8g2)
+{
+    static uint8_t phase = 0;
+    const uint8_t segments = 12;
+    const uint8_t active_window = 3;
+    const uint8_t bar_x = 2;
+    const uint8_t bar_y = 60;
+    const uint8_t bar_w = 124;
+    const uint8_t bar_h = 3;
+
+    // Barra ciclica: janela de segmentos "acesos" caminhando no tempo.
+    u8g2_DrawFrame(u8g2, bar_x, bar_y, bar_w, bar_h);
+    for (uint8_t i = 0; i < segments; i++) {
+        uint8_t wrapped = (uint8_t)((i + segments - phase) % segments);
+        if (wrapped < active_window) {
+            uint8_t seg_x = (uint8_t)(bar_x + 1U + (i * 10U));
+            u8g2_DrawBox(u8g2, seg_x, (uint8_t)(bar_y + 1U), 8, 1);
+        }
+    }
+
+    phase = (uint8_t)((phase + 1U) % segments);
+}
+
+// Desenha quatro slots com leituras de ar/solo ou placeholders sem leitura.
+static void draw_probe_rows(u8g2_t *u8g2, const app_state_snapshot_t *st)
+{
+    char line[32];
+    char a_t[4];
+    char a_u[4];
+    char s_t[4];
+    char s_u[4];
+
+    // Abreviacoes para caber com fonte padrao: A/U (ar), T/S (solo).
+    // Exemplo: S1 A23 U55 T21 S40.
+    for (int i = 0; i < APP_PROBE_COUNT; i++) {
+        bool has_data = st->probes[i].installed && st->probes[i].has_reading;
+        format_probe_value(a_t, sizeof(a_t), has_data, st->probes[i].air_temperature);
+        format_probe_value(a_u, sizeof(a_u), has_data, st->probes[i].air_humidity);
+        format_probe_value(s_t, sizeof(s_t), has_data, st->probes[i].soil_temperature);
+        format_probe_value(s_u, sizeof(s_u), has_data, st->probes[i].soil_humidity);
+
+        snprintf(line,
+                 sizeof(line),
+                 "S%u A%s U%s T%s S%s",
+                 (unsigned)st->probes[i].probe_id,
+                 a_t,
+                 a_u,
+                 s_t,
+                 s_u);
+        u8g2_DrawStr(u8g2, 2, 24 + (i * 12), line);
+    }
+}
+
+// Renderiza Ajustes e subfluxos de lote, data, Ambiencia, buzzer e sondas.
 static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
 {
-    static const char *items[] = {"Data", "Temperaturas", "Buzzer", "Umidade", "Instalar Sondas"};
-    static const char *temp_items[] = {"Curvas", "Offset"};
+    static const char *items[] = {"Lote", "Data", "Ambiencia", "Opcoes", "Instalar Sondas"};
+    static const char *ambience_fields[] = {
+        "Idade dias", "Temp ar", "Umid ar", "Temp solo",
+        "Umid solo", "Aspersores", "Irrigadores", "Exaustores"
+    };
     static const char *buzzer_items[] = {"Habilitar", "Desabilitar"};
     static const char *probe_items[] = {"Instalar", "Desinstalar", "Sondas"};
     char line[64];
+    const char *title = st->settings_lot_mode != APP_LOT_MODE_NONE
+        ? "LOTE"
+          : (st->ambience_mode != APP_AMBIENCE_MODE_NONE ? "AMBIENCIA"
+              : (st->settings_buzzer_mode != 0U ? "BUZZER"
+                  : (st->settings_options_mode != APP_OPTIONS_MODE_NONE ? "OPCOES" : "AJUSTES")));
 
     u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
-    u8g2_DrawStr(u8g2, 2, 10, "AJUSTES");
+    u8g2_DrawStr(u8g2, 2, 10, title);
+    if (!st->ambience_alarm_active && st->ambience_mode != APP_AMBIENCE_MODE_NONE) {
+        u8g2_DrawStr(u8g2, 100, 10, st->ambience_configured ? "ON" : "OFF");
+    }
     u8g2_DrawHLine(u8g2, 0, 12, 128);
 
     if (st->settings_editing_datetime) {
@@ -109,23 +303,111 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
         u8g2_DrawStr(u8g2, 2, 46, line);
         snprintf(line, sizeof(line), "%02u:%02u:%02u", st->datetime.hour, st->datetime.minute, st->datetime.second);
         u8g2_DrawStr(u8g2, 2, 58, line);
-    } else if (st->settings_temperature_mode == 1) {
-        u8g2_DrawStr(u8g2, 2, 22, "> Temperaturas");
-        for (int i = 0; i < 2; i++) {
-            snprintf(line, sizeof(line), "%c%s", (st->temperature_index == (uint8_t)i) ? '>' : ' ', temp_items[i]);
-            u8g2_DrawStr(u8g2, 2, 36 + (i * 12), line);
+    } else if (st->settings_lot_mode == APP_LOT_MODE_MENU) {
+        u8g2_DrawStr(u8g2, 2, 24, st->lot_started ? ">Finalizar Lote" : ">Iniciar Lote");
+        if (st->lot_started) {
+            const char *status = st->lot_status == APP_LOT_STATUS_SCHEDULED ? "Agendado" : "Ja iniciado";
+            snprintf(line, sizeof(line), "Atual: %s", status);
+            u8g2_DrawStr(u8g2, 2, 40, line);
         }
-    } else if (st->settings_temperature_mode == 2) {
-        u8g2_DrawStr(u8g2, 2, 22, "> Temperaturas");
-        u8g2_DrawStr(u8g2, 2, 34, "Curvas");
-        u8g2_DrawStr(u8g2, 2, 46, "Em desenvolvimento");
-        u8g2_DrawStr(u8g2, 2, 58, "BACK = voltar");
-    } else if (st->settings_temperature_mode == 3) {
-        u8g2_DrawStr(u8g2, 2, 22, "> Temperaturas");
-        u8g2_DrawStr(u8g2, 2, 34, "Offset");
-        u8g2_DrawStr(u8g2, 2, 46, "Em desenvolvimento");
-        u8g2_DrawStr(u8g2, 2, 58, "BACK = voltar");
-    } else if (st->settings_buzzer_mode == 1) {
+    } else if (st->settings_lot_mode == APP_LOT_MODE_EDIT) {
+        static const char *lot_fields[] = {"Dia", "Mes", "Ano", "Hora", "Min"};
+        snprintf(line, sizeof(line), "Inicio: %s", lot_fields[st->datetime_field_index]);
+        u8g2_DrawStr(u8g2, 2, 24, line);
+        snprintf(line, sizeof(line), "%02u/%02u/%04u",
+                 st->datetime.day, st->datetime.month, st->datetime.year);
+        u8g2_DrawStr(u8g2, 2, 40, line);
+        snprintf(line, sizeof(line), "%02u:%02u", st->datetime.hour, st->datetime.minute);
+        u8g2_DrawStr(u8g2, 2, 54, line);
+    } else if (st->settings_lot_mode == APP_LOT_MODE_CONFIRMED) {
+        u8g2_DrawStr(u8g2, 2, 24,
+                     st->lot_status == APP_LOT_STATUS_SCHEDULED ? "LOTE AGENDADO" : "LOTE INICIADO");
+        snprintf(line, sizeof(line), "%02u/%02u/%04u",
+                 st->lot_start_datetime.day,
+                 st->lot_start_datetime.month,
+                 st->lot_start_datetime.year);
+        u8g2_DrawStr(u8g2, 2, 40, line);
+        snprintf(line, sizeof(line), "%02u:%02u",
+                 st->lot_start_datetime.hour, st->lot_start_datetime.minute);
+        u8g2_DrawStr(u8g2, 2, 52, line);
+        u8g2_DrawStr(u8g2, 2, 62, "OK/BACK: voltar");
+    } else if (st->settings_lot_mode == APP_LOT_MODE_FINISH_CONFIRM) {
+        u8g2_DrawStr(u8g2, 2, 24, "Finalizar lote?");
+        snprintf(line, sizeof(line), "%02u/%02u/%04u",
+                 st->lot_start_datetime.day,
+                 st->lot_start_datetime.month,
+                 st->lot_start_datetime.year);
+        u8g2_DrawStr(u8g2, 2, 40, line);
+        snprintf(line, sizeof(line), "%02u:%02u",
+                 st->lot_start_datetime.hour, st->lot_start_datetime.minute);
+        u8g2_DrawStr(u8g2, 2, 52, line);
+        u8g2_DrawStr(u8g2, 2, 62, "OK=sim BACK=nao");
+    } else if (st->settings_lot_mode == APP_LOT_MODE_FINISHED) {
+        u8g2_DrawStr(u8g2, 2, 24, "LOTE FINALIZADO");
+        u8g2_DrawStr(u8g2, 2, 40, "Idade: 0 dias");
+        u8g2_DrawStr(u8g2, 2, 62, "OK/BACK: voltar");
+    } else if (st->ambience_mode == APP_AMBIENCE_MODE_CURVE_LIST) {
+        uint8_t first_visible = st->ambience_curve_index > 3U
+            ? (uint8_t)(st->ambience_curve_index - 3U)
+            : 0U;
+        for (uint8_t row = 0; row < 4U && first_visible + row < APP_AMBIENCE_CURVE_COUNT; row++) {
+            uint8_t i = (uint8_t)(first_visible + row);
+            snprintf(line, sizeof(line), "%cC%u  Idade: %u d",
+                     st->ambience_curve_index == i ? '>' : ' ',
+                     (unsigned)(i + 1U),
+                     (unsigned)st->ambience_curves[i].age_days);
+            u8g2_DrawStr(u8g2, 2, 23 + (row * 9), line);
+        }
+        u8g2_DrawStr(u8g2, 2, 61, "ENT edita BACK ativa");
+    } else if (st->ambience_mode == APP_AMBIENCE_MODE_EDIT_CURVE) {
+        const app_ambience_curve_t *curve = &st->ambience_curves[st->ambience_curve_index];
+        snprintf(line, sizeof(line), "Curva %u/5  Campo %u/8",
+                 (unsigned)(st->ambience_curve_index + 1U),
+                 (unsigned)(st->ambience_field_index + 1U));
+        u8g2_DrawStr(u8g2, 2, 25, line);
+        snprintf(line, sizeof(line), "%s:", ambience_fields[st->ambience_field_index]);
+        u8g2_DrawStr(u8g2, 2, 39, line);
+
+        switch (st->ambience_field_index) {
+            case 0:
+                snprintf(line, sizeof(line), "%u dias", (unsigned)curve->age_days);
+                break;
+            case 1:
+            case 3: {
+                int16_t temperature = st->ambience_field_index == 1U
+                    ? curve->air_temperature_x10
+                    : curve->soil_temperature_x10;
+                if (temperature < 0) {
+                    snprintf(line, sizeof(line), "-%d.%d C", -temperature / 10, -temperature % 10);
+                } else {
+                    snprintf(line, sizeof(line), "%d.%d C", temperature / 10, temperature % 10);
+                }
+                break;
+            }
+            case 2:
+                snprintf(line, sizeof(line), "%u %%", (unsigned)curve->air_humidity_percent);
+                break;
+            case 4:
+                snprintf(line, sizeof(line), "%u %%", (unsigned)curve->soil_humidity_percent);
+                break;
+            case 5:
+                snprintf(line, sizeof(line), "%u", (unsigned)curve->sprinkler_count);
+                break;
+            case 6:
+                snprintf(line, sizeof(line), "%u", (unsigned)curve->irrigator_count);
+                break;
+            default:
+                snprintf(line, sizeof(line), "%u", (unsigned)curve->exhaust_fan_count);
+                break;
+        }
+        u8g2_DrawStr(u8g2, 2, 52, line);
+        u8g2_DrawStr(u8g2, 2, 62, "UP/DN muda  ENT prox");
+    } else if (st->settings_options_mode == APP_OPTIONS_MODE_MENU &&
+               st->settings_buzzer_mode == 0U) {
+        u8g2_DrawStr(u8g2, 2, 24, "> Buzzer");
+        u8g2_DrawStr(u8g2, 2, 50, "BACK = voltar");
+    } else if (st->settings_options_mode == APP_OPTIONS_MODE_MENU &&
+               st->settings_buzzer_mode == 1U) {
         u8g2_DrawStr(u8g2, 2, 22, "> Buzzer");
         for (int i = 0; i < 2; i++) {
             snprintf(line, sizeof(line), "%c%s", (st->buzzer_index == (uint8_t)i) ? '>' : ' ', buzzer_items[i]);
@@ -141,31 +423,19 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
             u8g2_DrawStr(u8g2, 2, 36 + (i * 12), line);
         }
     } else if (st->settings_probe_mode == 2) {
-        // Tela interna de instalacao com telemetria formatada por sonda.
-        char t_str[8];
-        char u_str[8];
-        char s_str[8];
-
-        u8g2_DrawStr(u8g2, 2, 10, "INSTALAR");
+        u8g2_DrawStr(u8g2, 2, 10, "INSTALAR SONDAS");
         u8g2_DrawHLine(u8g2, 0, 12, 128);
 
-        // Fonte menor para caber T/U/S das 4 sondas em linhas separadas.
-        u8g2_SetFont(u8g2, u8g2_font_4x6_tr);
-        for (int i = 0; i < APP_PROBE_COUNT; i++) {
-            format_probe_value(t_str, sizeof(t_str), st->probes[i].has_reading, st->probes[i].temperature);
-            format_probe_value(u_str, sizeof(u_str), st->probes[i].has_reading, st->probes[i].air_humidity);
-            format_probe_value(s_str, sizeof(s_str), st->probes[i].has_reading, st->probes[i].soil_humidity);
-            snprintf(line, sizeof(line), "S%d:T:%s U:%s S:%s", i + 1, t_str, u_str, s_str);
-            u8g2_DrawStr(u8g2, 2, 22 + (i * 10), line);
-        }
-
-        u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
+        draw_probe_rows(u8g2, st);
         if (st->probe_install_running) {
-            u8g2_DrawStr(u8g2, 2, 60, "Instalando");
+            // Durante instalacao ativa, mostra progresso visual ciclico.
+            draw_install_progress_indicator(u8g2);
         } else if (st->probe_install_finished) {
-            u8g2_DrawStr(u8g2, 2, 60, "Instalacao OK");
+            // Ao finalizar 4/4, barra some e entra status final.
+            snprintf(line, sizeof(line), "Sondas instaladas: %u/4", st->probe_install_completed_count);
+            u8g2_DrawStr(u8g2, 2, 60, line);
         } else {
-            u8g2_DrawStr(u8g2, 2, 60, "Aguardando");
+            u8g2_DrawStr(u8g2, 2, 60, "Aguardando inicio");
         }
     } else if (st->settings_probe_mode == 3) {
         // Tela interna de desinstalacao com status fixo e progresso de ciclos.
@@ -185,50 +455,23 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
         }
         u8g2_DrawStr(u8g2, 2, 60, "Desinstalando...");
     } else if (st->settings_probe_mode == 4) {
-        // Tela "Sondas": leitura ciclica em tempo real por sensor.
-        // A task de monitoramento UART atualiza st->probes[] em background.
-        // Esta tela apenas consome snapshot pronto e renderiza.
-        char t_str[8];
-        char u_str[8];
-        char s_str[8];
-
         u8g2_DrawStr(u8g2, 2, 10, "SONDAS");
         u8g2_DrawHLine(u8g2, 0, 12, 128);
-
-        u8g2_SetFont(u8g2, u8g2_font_4x6_tr);
-        for (int i = 0; i < APP_PROBE_COUNT; i++) {
-            if (st->probes[i].installed && st->probes[i].has_reading) {
-                // Sensor ativo com leitura valida no ultimo ciclo de polling.
-                snprintf(t_str, sizeof(t_str), "%4.1f", st->probes[i].temperature);
-                snprintf(u_str, sizeof(u_str), "%4.1f", st->probes[i].air_humidity);
-                snprintf(s_str, sizeof(s_str), "%4.1f", st->probes[i].soil_humidity);
-            } else {
-                // Sensor ausente/sem resposta: mantemos mascara fixa para
-                // facilitar leitura visual da grade sem "pular" alinhamento.
-                snprintf(t_str, sizeof(t_str), "__._");
-                snprintf(u_str, sizeof(u_str), "__._");
-                snprintf(s_str, sizeof(s_str), "__._");
-            }
-
-            snprintf(line, sizeof(line), "Sensor %d: T:%s U:%s S:%s", i + 1, t_str, u_str, s_str);
-            u8g2_DrawStr(u8g2, 2, 22 + (i * 10), line);
-        }
-
-        u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
+        draw_probe_rows(u8g2, st);
     } else {
-        for (int i = 0; i < 5; i++) {
-            if(st->settings_index < 4){
-                snprintf(line, sizeof(line), "%c%s", (st->settings_index == (uint8_t)i) ? '>' : ' ', items[i]);
-                u8g2_DrawStr(u8g2, 2, 23 + (i * 12), line);
-            }
-            else if(st->settings_index >= 4 && i >= 4){
-                snprintf(line, sizeof(line), "%c%s", (st->settings_index == (uint8_t)i) ? '>' : ' ', items[i]);
-                u8g2_DrawStr(u8g2, 2, 23 + ((i-4) * 12), line);
-            }
+        uint8_t first_visible = st->settings_index > 3U
+            ? (uint8_t)(st->settings_index - 3U)
+            : 0U;
+        for (uint8_t row = 0; row < 4U && first_visible + row < 5U; row++) {
+            uint8_t item_index = (uint8_t)(first_visible + row);
+            snprintf(line, sizeof(line), "%c%s",
+                     st->settings_index == item_index ? '>' : ' ', items[item_index]);
+            u8g2_DrawStr(u8g2, 2, 23 + (row * 12), line);
         }
     }
 }
 
+// Desenha informacoes estaticas de identificacao da aplicacao.
 static void draw_about_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
 {
     (void)st;
@@ -242,12 +485,20 @@ static void draw_about_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
     u8g2_DrawStr(u8g2, 2, 60, "BACK = voltar");
 }
 
+// Despacha para o renderer da tela corrente, sem alterar o snapshot.
 static void draw_screen(u8g2_t *u8g2, const app_state_snapshot_t *st)
 {
     // Dispatcher de tela: escolhe qual layout desenhar conforme estado atual.
     switch (st->screen) {
         case APP_SCREEN_HOME:
             draw_home(u8g2, st);
+            break;
+        case APP_SCREEN_HOME_PROBES:
+            // Tela espelho de sondas acessada pela tecla esquerda na HOME.
+            u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
+            u8g2_DrawStr(u8g2, 2, 10, "SONDAS INSTALADAS");
+            u8g2_DrawHLine(u8g2, 0, 12, 128);
+            draw_probe_rows(u8g2, st);
             break;
         case APP_SCREEN_MENU:
             draw_main_menu(u8g2, st);
@@ -256,7 +507,7 @@ static void draw_screen(u8g2_t *u8g2, const app_state_snapshot_t *st)
             draw_settings_menu(u8g2, st);
             break;
         case APP_SCREEN_MENU_REPORTS:
-            draw_placeholder_screen(u8g2, "RELATORIOS");
+            draw_reports(u8g2, st);
             break;
         case APP_SCREEN_MENU_ABOUT:
             draw_about_menu(u8g2, st);
@@ -269,6 +520,7 @@ static void draw_screen(u8g2_t *u8g2, const app_state_snapshot_t *st)
 
 // Esta funcao e um callback exigido pelo u8g2 para abstrair GPIO e delays.
 // Em resumo: o u8g2 manda uma "mensagem" (msg) e aqui traduzimos para ESP32.
+// Traduz mensagens u8g2 em sinais GPIO ST7920 e atrasos do FreeRTOS.
 uint8_t u8x8_gpio_and_delay_esp32(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr)
 {
     // Parametros nao usados diretamente neste callback.
@@ -327,6 +579,7 @@ uint8_t u8x8_gpio_and_delay_esp32(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, vo
     return 1;
 }
 
+// Inicializa o ST7920 e repinta snapshots do modelo a cada 90 ms.
 void display_task(void *pvParameters)
 {
     (void)pvParameters;
@@ -363,6 +616,10 @@ void display_task(void *pvParameters)
 
         // Moldura para facilitar visualizacao durante depuracao.
         u8g2_DrawFrame(&u8g2, 0, 0, 128, 64);
+        if (snapshot.ambience_alarm_active) {
+            u8g2_DrawFrame(&u8g2, 116, 1, 11, 11);
+            u8g2_DrawStr(&u8g2, 119, 10, "!");
+        }
 
         u8g2_SendBuffer(&u8g2);
 

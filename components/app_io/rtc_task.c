@@ -14,16 +14,19 @@
 
 static const char *TAG_RTC = "RTC_TASK";
 
+// Converte valor decimal 0..99 para o formato BCD do DS3231.
 static uint8_t to_bcd(uint8_t val)
 {
     return (uint8_t)(((val / 10U) << 4U) | (val % 10U));
 }
 
+// Converte campo BCD do RTC para decimal.
 static uint8_t from_bcd(uint8_t val)
 {
     return (uint8_t)(((val >> 4U) * 10U) + (val & 0x0FU));
 }
 
+// Calcula dia da semana gregoriano para preencher o registrador weekday.
 static uint8_t weekday_from_date(uint16_t year, uint8_t month, uint8_t day)
 {
     static const uint8_t month_offsets[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
@@ -36,6 +39,7 @@ static uint8_t weekday_from_date(uint16_t year, uint8_t month, uint8_t day)
                       + month_offsets[month - 1U] + day) % 7U + 1U);
 }
 
+// Le registradores 0x00..0x06 e converte os campos para app_datetime_t.
 static esp_err_t ds3231_read_datetime(app_datetime_t *dt)
 {
     if (dt == NULL) {
@@ -69,6 +73,7 @@ static esp_err_t ds3231_read_datetime(app_datetime_t *dt)
     return ESP_OK;
 }
 
+// Codifica data/hora em BCD e escreve os sete registradores do DS3231.
 static esp_err_t ds3231_write_datetime(const app_datetime_t *dt)
 {
     if (dt == NULL) {
@@ -95,6 +100,7 @@ static esp_err_t ds3231_write_datetime(const app_datetime_t *dt)
     );
 }
 
+// Task periodica de leitura; falhas sao registradas e tentadas no proximo ciclo.
 void rtc_read_task(void *pvParameters)
 {
     (void)pvParameters;
@@ -114,6 +120,7 @@ void rtc_read_task(void *pvParameters)
     }
 }
 
+// Task sob demanda para pedidos do editor de data/hora.
 void rtc_write_task(void *pvParameters)
 {
     (void)pvParameters;

@@ -8,18 +8,25 @@
 #include "esp_log.h"
 #include "app_pin_config.h"
 #include "app_model.h"
+#include "app_ambience_control.h"
+#include "app_alarm_monitor.h"
+#include "app_alarm_store.h"
+#include "app_lot_store.h"
 // #include "app_menu_functions"
 #include "keyboard.h"
 #include "probe_install.h"
 
 static const char *TAG_IO = "IO_TASK";
 
+// Orquestra LEDs, buzzer, FSMs RS-485, controle de ambiencia e persistencia do lote.
 void io_task(void *pvParameters){
     bool led_state = false;
 
     // Marcadores de tempo (em ms) para tarefas periodicas.
     uint32_t last_led_toggle_ms = 0;
     uint32_t last_buzzer_toggle_ms = 0;
+    uint32_t last_alarm_toggle_ms = 0;
+    bool alarm_buzzer_state = false;
 
     // Inicializa UART e estado do instalador de sondas.
     probe_install_manager_init();
@@ -35,11 +42,26 @@ void io_task(void *pvParameters){
             gpio_set_level(APP_LED_1_PIN, led_state ? 1 : 0);
             gpio_set_level(APP_LED_2_PIN, led_state ? 0 : 1);
         }
+        // O alarme ambiental tem prioridade sobre o beep de navegacao.
+        app_state_snapshot_t ambience_snapshot;
+        app_model_get_snapshot(&ambience_snapshot);
+        if (ambience_snapshot.ambience_alarm_active) {
+            if (now_ms - last_alarm_toggle_ms >= 500U) {
+                last_alarm_toggle_ms = now_ms;
+                alarm_buzzer_state = !alarm_buzzer_state;
+                gpio_set_level(APP_BUZZER_PIN, alarm_buzzer_state ? 1 : 0);
+            }
+        } else {
+            alarm_buzzer_state = false;
+            gpio_set_level(APP_BUZZER_PIN, 0);
+        }
+
         // Beep unico por tecla estavel:
         // - adc_task marca um flag quando uma tecla valida e reconhecida.
         // - aqui consumimos o flag apenas uma vez e, se habilitado no menu,
         //   geramos um pulso curto no buzzer.
-        if (app_model_take_key_press_flag()) {
+        bool key_press_pending = app_model_take_key_press_flag();
+        if (!ambience_snapshot.ambience_alarm_active && key_press_pending) {
             if (app_model_is_key_beep_enabled() && (now_ms - last_buzzer_toggle_ms >= 100U)) {
                 last_buzzer_toggle_ms = now_ms;
 
@@ -57,18 +79,49 @@ void io_task(void *pvParameters){
         //
         // Como o loop roda a cada ~50ms, este e o "relogio" base das FSMs.
         // Cada FSM aplica seus proprios timeouts internos (100ms, 500ms, 1200ms etc.).
-        probe_install_manager_set_active(app_model_is_probe_install_screen_active());
-        probe_uninstall_manager_set_active(app_model_is_probe_uninstall_screen_active());
-        probe_monitor_manager_set_active(app_model_is_probe_list_screen_active());
+        bool install_screen_active = app_model_is_probe_install_screen_active();
+        bool uninstall_screen_active = app_model_is_probe_uninstall_screen_active();
+        bool monitor_active = app_model_is_probe_list_screen_active() ||
+            (ambience_snapshot.lot_status == APP_LOT_STATUS_ACTIVE &&
+             !install_screen_active && !uninstall_screen_active);
+        probe_install_manager_set_active(install_screen_active);
+        probe_uninstall_manager_set_active(uninstall_screen_active);
+        probe_monitor_manager_set_active(monitor_active);
         probe_install_manager_periodic(now_ms);
         run_uninstall_sequence(now_ms);
         probe_monitor_manager_periodic(now_ms);
+
+        app_model_get_snapshot(&ambience_snapshot);
+        app_datetime_t lot_start_datetime;
+        bool lot_started;
+        if (app_model_take_lot_write_request(&lot_start_datetime, &lot_started)) {
+            if (lot_started) {
+                // Um novo lote comeca um historico independente de alarmes.
+                esp_err_t clear_err = app_alarm_store_clear();
+                if (clear_err != ESP_OK) {
+                    ESP_LOGE(TAG_IO, "Falha ao limpar historico de alarmes: %s",
+                             esp_err_to_name(clear_err));
+                }
+                app_alarm_monitor_reset();
+            }
+            esp_err_t err = lot_started
+                ? app_lot_store_save(&lot_start_datetime)
+                : app_lot_store_clear();
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG_IO, "Falha ao persistir estado do lote: %s", esp_err_to_name(err));
+            }
+        }
+
+        // Persiste novos cruzamentos de faixa antes de atualizar os alarmes de controle.
+        app_alarm_monitor_update(&ambience_snapshot, monitor_active);
+        app_ambience_control_update(&ambience_snapshot, now_ms, monitor_active);
 
         vTaskDelay(pdMS_TO_TICKS(50));
     }
     vTaskDelete(NULL);
 }
 
+// Task rapida de entrada: ADC -> debounce -> evento do modelo -> timeout de UI.
 void adc_task(void *pvParameters){
     keyboard_adc_init();        //inicia o teclado ADC
     while (1) {
