@@ -84,9 +84,11 @@ restricoes da placa antes de conectar; os defines ficam em `app_pin_config.h`.
 
 A AT25SF321B possui 4 MiB. O ultimo setor de 4 KiB, no endereco `0x3FF000`, fica
 reservado para data/hora de inicio e flag do lote. O penultimo setor, em
-`0x3FE000`, armazena as cinco curvas de ambiencia com versao e CRC. Ao finalizar
-o lote, somente o setor `0x3FF000` e apagado; os demais setores permanecem
-disponiveis para futuras configuracoes e relatorios.
+`0x3FE000`, armazena as cinco curvas de ambiencia com versao e CRC. O
+antepenultimo setor, em `0x3FD000`, armazena o historico append-only de alarmes
+(ate 240 eventos, com CRC). Ao iniciar/agendar novo lote, somente o setor de
+alarmes e limpo; ao finalizar, somente o setor `0x3FF000` do lote e apagado.
+Os setores anteriores a `0x3FD000` permanecem disponiveis para futuras expansoes.
 As alteracoes das curvas sao gravadas apos 1,5 s sem edicao; as idades iniciais
 sao 0, 7, 14, 21 e 28 dias e devem permanecer em ordem crescente. A automacao
 so e habilitada depois de editar uma curva e usar BACK na lista de curvas; o

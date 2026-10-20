@@ -7,18 +7,11 @@
 #include "u8g2.h"
 #include "app_pin_config.h"
 #include "app_model.h"
+#include "app_alarm_monitor.h"
+#include "app_alarm_store.h"
 #include "display_task.h"
 
 static const char *TAG_LCD = "DISPLAY_TASK";
-
-// Limiares locais de alarme usados no resumo da HOME.
-// Podem migrar para configuracao de usuario em revisao futura.
-#define ALARM_AIR_TEMP_MIN_C    5.0f
-#define ALARM_AIR_TEMP_MAX_C   35.0f
-#define ALARM_AIR_HUM_MIN_PCT  20.0f
-#define ALARM_AIR_HUM_MAX_PCT  90.0f
-#define ALARM_SOIL_HUM_MIN_PCT 15.0f
-#define ALARM_SOIL_HUM_MAX_PCT 95.0f
 
 // -----------------------------------------------------------------------------
 // Funcoes draw_*:
@@ -51,12 +44,14 @@ static void draw_home(u8g2_t *u8g2, const app_state_snapshot_t *st)
         samples++;
 
         bool probe_alarm =
-            (st->probes[i].air_temperature < ALARM_AIR_TEMP_MIN_C) ||
-            (st->probes[i].air_temperature > ALARM_AIR_TEMP_MAX_C) ||
-            (st->probes[i].air_humidity < ALARM_AIR_HUM_MIN_PCT) ||
-            (st->probes[i].air_humidity > ALARM_AIR_HUM_MAX_PCT) ||
-            (st->probes[i].soil_humidity < ALARM_SOIL_HUM_MIN_PCT) ||
-            (st->probes[i].soil_humidity > ALARM_SOIL_HUM_MAX_PCT);
+            (st->probes[i].air_temperature < APP_ALARM_AIR_TEMPERATURE_MIN_C) ||
+            (st->probes[i].air_temperature > APP_ALARM_AIR_TEMPERATURE_MAX_C) ||
+            (st->probes[i].air_humidity < APP_ALARM_AIR_HUMIDITY_MIN_PCT) ||
+            (st->probes[i].air_humidity > APP_ALARM_AIR_HUMIDITY_MAX_PCT) ||
+            (st->probes[i].soil_temperature < APP_ALARM_SOIL_TEMPERATURE_MIN_C) ||
+            (st->probes[i].soil_temperature > APP_ALARM_SOIL_TEMPERATURE_MAX_C) ||
+            (st->probes[i].soil_humidity < APP_ALARM_SOIL_HUMIDITY_MIN_PCT) ||
+            (st->probes[i].soil_humidity > APP_ALARM_SOIL_HUMIDITY_MAX_PCT);
 
         if (probe_alarm) {
             alarms++;
@@ -133,6 +128,61 @@ static void draw_placeholder_screen(u8g2_t *u8g2, const char *title)
     u8g2_DrawStr(u8g2, 2, 50, "BACK = voltar");
 }
 
+// Converte o codigo persistido em um nome curto que cabe na tela 128x64.
+static const char *alarm_name(app_alarm_type_t type)
+{
+    switch (type) {
+        case APP_ALARM_AIR_TEMPERATURE_LOW: return "Temp. ar baixa";
+        case APP_ALARM_AIR_TEMPERATURE_HIGH: return "Temp. ar alta";
+        case APP_ALARM_AIR_HUMIDITY_LOW: return "Umid. ar baixa";
+        case APP_ALARM_AIR_HUMIDITY_HIGH: return "Umid. ar alta";
+        case APP_ALARM_SOIL_TEMPERATURE_LOW: return "Temp. solo baixa";
+        case APP_ALARM_SOIL_TEMPERATURE_HIGH: return "Temp. solo alta";
+        case APP_ALARM_SOIL_HUMIDITY_LOW: return "Umid. solo baixa";
+        case APP_ALARM_SOIL_HUMIDITY_HIGH: return "Umid. solo alta";
+        case APP_ALARM_AMBIENCE_AIR_HOT: return "T. ar alta (meta)";
+        case APP_ALARM_AMBIENCE_AIR_DRY: return "U. ar baixa (meta)";
+        case APP_ALARM_AMBIENCE_AIR_HUMID: return "U. ar alta (meta)";
+        case APP_ALARM_AMBIENCE_SOIL_DRY: return "U. solo baixa(meta)";
+        default: return "Alarme desconhecido";
+    }
+}
+
+// Mostra um evento por vez, partindo do mais recente para o mais antigo.
+static void draw_reports(u8g2_t *u8g2, const app_state_snapshot_t *st)
+{
+    char line[32];
+    app_alarm_event_t event;
+
+    u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
+    u8g2_DrawStr(u8g2, 2, 10, "RELATORIOS");
+    if (st->report_count == 0U) {
+        u8g2_DrawHLine(u8g2, 0, 12, 128);
+        u8g2_DrawStr(u8g2, 2, 36, "Sem alarmes");
+        return;
+    }
+
+    snprintf(line, sizeof(line), "%u/%u",
+             (unsigned)(st->report_index + 1U), (unsigned)st->report_count);
+    u8g2_DrawStr(u8g2, 84, 10, line);
+    u8g2_DrawHLine(u8g2, 0, 12, 128);
+
+    uint16_t chronological_index = (uint16_t)(st->report_count - 1U - st->report_index);
+    if (app_alarm_store_get(chronological_index, &event) != ESP_OK) {
+        u8g2_DrawStr(u8g2, 2, 36, "Falha ao ler alarme");
+        return;
+    }
+
+    snprintf(line, sizeof(line), "%s S%u", alarm_name(event.type), (unsigned)event.probe_id);
+    u8g2_DrawStr(u8g2, 2, 27, line);
+    snprintf(line, sizeof(line), "%02u/%02u/%04u %02u:%02u",
+             event.datetime.day, event.datetime.month, event.datetime.year,
+             event.datetime.hour, event.datetime.minute);
+    u8g2_DrawStr(u8g2, 2, 42, line);
+    snprintf(line, sizeof(line), "Idade: %lu dias", (unsigned long)event.lot_age_days);
+    u8g2_DrawStr(u8g2, 2, 57, line);
+}
+
 // Formata leitura ou placeholder respeitando o espaco reduzido de cada linha.
 static void format_probe_value(char *out, size_t out_len, bool has_value, float value)
 {
@@ -201,7 +251,7 @@ static void draw_probe_rows(u8g2_t *u8g2, const app_state_snapshot_t *st)
 // Renderiza Ajustes e subfluxos de lote, data, Ambiencia, buzzer e sondas.
 static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
 {
-    static const char *items[] = {"Lote", "Data", "Ambiencia", "Buzzer", "Instalar Sondas"};
+    static const char *items[] = {"Lote", "Data", "Ambiencia", "Opcoes", "Instalar Sondas"};
     static const char *ambience_fields[] = {
         "Idade dias", "Temp ar", "Umid ar", "Temp solo",
         "Umid solo", "Aspersores", "Irrigadores", "Exaustores"
@@ -211,7 +261,9 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
     char line[64];
     const char *title = st->settings_lot_mode != APP_LOT_MODE_NONE
         ? "LOTE"
-        : (st->ambience_mode != APP_AMBIENCE_MODE_NONE ? "AMBIENCIA" : "AJUSTES");
+          : (st->ambience_mode != APP_AMBIENCE_MODE_NONE ? "AMBIENCIA"
+              : (st->settings_buzzer_mode != 0U ? "BUZZER"
+                  : (st->settings_options_mode != APP_OPTIONS_MODE_NONE ? "OPCOES" : "AJUSTES")));
 
     u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
     u8g2_DrawStr(u8g2, 2, 10, title);
@@ -350,7 +402,12 @@ static void draw_settings_menu(u8g2_t *u8g2, const app_state_snapshot_t *st)
         }
         u8g2_DrawStr(u8g2, 2, 52, line);
         u8g2_DrawStr(u8g2, 2, 62, "UP/DN muda  ENT prox");
-    } else if (st->settings_buzzer_mode == 1) {
+    } else if (st->settings_options_mode == APP_OPTIONS_MODE_MENU &&
+               st->settings_buzzer_mode == 0U) {
+        u8g2_DrawStr(u8g2, 2, 24, "> Buzzer");
+        u8g2_DrawStr(u8g2, 2, 50, "BACK = voltar");
+    } else if (st->settings_options_mode == APP_OPTIONS_MODE_MENU &&
+               st->settings_buzzer_mode == 1U) {
         u8g2_DrawStr(u8g2, 2, 22, "> Buzzer");
         for (int i = 0; i < 2; i++) {
             snprintf(line, sizeof(line), "%c%s", (st->buzzer_index == (uint8_t)i) ? '>' : ' ', buzzer_items[i]);
@@ -450,7 +507,7 @@ static void draw_screen(u8g2_t *u8g2, const app_state_snapshot_t *st)
             draw_settings_menu(u8g2, st);
             break;
         case APP_SCREEN_MENU_REPORTS:
-            draw_placeholder_screen(u8g2, "RELATORIOS");
+            draw_reports(u8g2, st);
             break;
         case APP_SCREEN_MENU_ABOUT:
             draw_about_menu(u8g2, st);

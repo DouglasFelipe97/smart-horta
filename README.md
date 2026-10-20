@@ -38,6 +38,8 @@ Cada slot de sonda tambem carrega:
 	- contagem de alarmes ativos
 	- data/hora
 	- medias das leituras de ar e solo das sondas instaladas
+- Menu Relatorios com historico persistente de alarmes de temperatura e umidade do ar e do solo.
+- Menu Ajustes > Opcoes > Buzzer para habilitar/desabilitar o beep de navegacao.
 - Atalho por tecla esquerda na HOME para tela direta de sondas instaladas.
 - Fluxo de instalacao de sondas com atribuicao de IDs.
 - Fluxo de desinstalacao redundante (multiplos ciclos para robustez).
@@ -70,6 +72,7 @@ permitindo:
 ## Documentacao
 
 - Guia tecnico das sondas: docs/GUIA_TECNICO_SONDAS.md
+- Guia tecnico do sistema, arquitetura, RTOS, controle, persistencia e protocolo: docs/GUIA_TECNICO_SISTEMA.md
 - Release notes de sondas: docs/RELEASE_NOTES_SONDAS.md
 - Mapeamento de pinos: docs/MAPEAMENTO_PINOS.md
 
@@ -102,7 +105,7 @@ UX de campo e padronizacao para suportar novos tipos de sonda.
 2. Configura GPIOs locais, ADC do teclado e I2C compartilhado por DS3231/PCF8574.
 3. Inicializa o PCF8574; P0..P6 iniciam inativos em LOW (driver ativo HIGH) e P7 fica HIGH sem uso.
 4. Inicializa a AT25SF321B e a task serializadora de flash.
-5. Carrega a data inicial do lote e as cinco curvas de Ambiencia, validando versao/CRC.
+5. Carrega lote, curvas de Ambiencia e historico de alarmes, validando seus formatos/CRCs.
 6. Cria tasks de teclado, I/O, display, RTC e persistencia de Ambiencia.
 
 Falha ao carregar um registro invalida somente aquele dado: o lote fica inativo ou
@@ -114,7 +117,7 @@ a task de persistencia nao e iniciada.
 | Task | Periodo/comportamento | Responsabilidade |
 |---|---|---|
 | `adc_task` | 20 ms | Le ADC, aplica debounce e envia tecla ao modelo. |
-| `io_task` | 50 ms | LEDs, buzzer, polling RS-485, controle de Ambiencia e escrita do lote. |
+| `io_task` | 50 ms | LEDs, buzzer, polling RS-485, controle de Ambiencia, alarmes e escrita do lote. |
 | `display_task` | 90 ms | Copia snapshot e desenha HOME/menus no ST7920. |
 | `rtc_read_task` | 1 s | Le DS3231 e atualiza relogio/idade do lote. |
 | `rtc_write_task` | 100 ms | Consome pedido de escrita do editor de data/hora. |
@@ -134,6 +137,7 @@ que e a maquina de estados da interface.
 - HOME + MENU abre o menu principal; UP/DOWN move o cursor e ENTER abre a opcao.
 - HOME + LEFT abre a visualizacao direta das sondas.
 - Em Ajustes, ENTER abre o submenu; BACK retorna um nivel ou cancela o fluxo.
+- O beep de teclas fica em Ajustes > Opcoes > Buzzer; BACK retorna Buzzer -> Opcoes -> Ajustes.
 - Em Ambiencia, UP/DOWN seleciona curva/campo, ENTER avanca e BACK retorna.
 - Alterar uma curva e sair da lista com BACK confirma/habilita a automacao.
 - Sem interacao por 30 s, a interface volta para HOME sem apagar configuracoes.
@@ -192,10 +196,21 @@ P2/P3, exaustores P4/P5. P6 e auxiliar sem funcao automatica nesta versao; P7 na
 e utilizado. A saida e active-HIGH conforme `APP_PCF8574_ACTIVE_HIGH`. O PCF8574
 nao deve alimentar cargas diretamente: use modulo rele/transistor apropriado.
 
-A HOME tambem mantem alarmes gerais por faixas fixas definidas no display (ar:
-5..35 C e 20..90%; solo: umidade 15..95%). A contagem mostrada combina essas
-faixas de monitoramento com o alarme dinamico da Ambiencia; as faixas fixas nao
-comandam o PCF8574. Temperatura do solo nao participa do controle ambiental.
+A HOME tambem mantem alarmes gerais por faixas fixas: temperatura do ar e do solo
+de 5..35 C, umidade do ar de 20..90% e umidade do solo de 15..95%. A contagem
+mostrada combina essas faixas de monitoramento com o alarme dinamico da Ambiencia;
+as faixas fixas nao comandam o PCF8574. Temperatura do solo continua fora do
+controle ambiental, mas agora tambem gera registro de alarme.
+
+Durante lote ativo, cada sonda instalada com leitura valida pode gerar um evento
+quando uma das quatro grandezas cruza seu limite fixo. As transicoes do controlador
+de Ambiencia relativas as metas tambem sao registradas e identificadas como tal.
+Cada condicao e salva uma vez enquanto permanecer ativa; depois de normalizar, uma
+nova ocorrencia pode ser registrada. O relatorio mostra o tipo do alarme, a sonda,
+data/hora e idade do lote. UP/DOWN percorre do evento mais recente ao mais antigo;
+BACK retorna ao menu. O setor comporta ate 240 eventos, mantidos mesmo apos
+reinicializacao. Ao confirmar o inicio/agendamento de um novo lote, somente o
+historico de alarmes e apagado; finalizar o lote nao apaga os registros.
 
 ## Protocolo das Sondas
 
@@ -219,12 +234,15 @@ de fachada sao sincrona para seu chamador.
 
 | Registro | Setor/endereco | Conteudo |
 |---|---|---|
+| Alarmes | Antepenultimo setor, `0x3FD000` | SHAL, versao 1, ate 240 eventos de 17 bytes, CRC32 por cabecalho e evento. |
 | Curvas | Penultimo setor, `0x3FE000` | SHAM, versao 2, flag ON/OFF, 5 curvas, CRC32. |
 | Lote | Ultimo setor, `0x3FF000` | SHLT, versao 1, flag de lote, data/hora, CRC32. |
 
-Cada save apaga somente seu setor, grava e relê para verificar. Curvas sao gravadas
-1,5 s apos a ultima edicao; erro gera nova tentativa. Ao finalizar lote, apenas
-`0x3FF000` e apagado. O restante da flash permanece disponivel.
+Cada save de configuracao apaga somente seu setor, grava e relê para verificar.
+O historico de alarmes e append-only para evitar apagar o setor em cada evento;
+apenas o inicio de novo lote limpa `0x3FD000`. Curvas sao gravadas 1,5 s apos a
+ultima edicao; erro gera nova tentativa. Ao finalizar lote, apenas `0x3FF000` e
+apagado. O restante da flash permanece disponivel.
 
 ## Catalogo de `components/app_io`
 
@@ -253,6 +271,8 @@ Todos os arquivos de `app_io` e suas responsabilidades:
 | `app_ambience_control.c` | Interpolacao, limites, timers, histerese, escalonamento e acionamento das saidas. |
 | `app_ambience_store.h` | API para carregar/gravar curvas e worker de persistencia. |
 | `app_ambience_store.c` | Formato SHAM, validacao, CRC32, setor de curvas e debounce/retry. |
+| `app_alarm_monitor.h` / `.c` | Limites fixos e deteccao de novas ocorrencias por sonda durante lote ativo. |
+| `app_alarm_store.h` / `.c` | Formato SHAL, CRC32, historico append-only e cache de eventos em RAM. |
 | `app_lot_store.h` | API de carga, gravacao e limpeza do lote. |
 | `app_lot_store.c` | Formato SHLT, validacao de calendario, CRC32 e setor do lote. |
 | `app_storage.h` | API sincrona da fila serializadora de flash. |

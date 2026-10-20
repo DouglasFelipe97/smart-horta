@@ -9,6 +9,8 @@
 #include "app_pin_config.h"
 #include "app_model.h"
 #include "app_ambience_control.h"
+#include "app_alarm_monitor.h"
+#include "app_alarm_store.h"
 #include "app_lot_store.h"
 // #include "app_menu_functions"
 #include "keyboard.h"
@@ -90,11 +92,18 @@ void io_task(void *pvParameters){
         probe_monitor_manager_periodic(now_ms);
 
         app_model_get_snapshot(&ambience_snapshot);
-        app_ambience_control_update(&ambience_snapshot, now_ms, monitor_active);
-
         app_datetime_t lot_start_datetime;
         bool lot_started;
         if (app_model_take_lot_write_request(&lot_start_datetime, &lot_started)) {
+            if (lot_started) {
+                // Um novo lote comeca um historico independente de alarmes.
+                esp_err_t clear_err = app_alarm_store_clear();
+                if (clear_err != ESP_OK) {
+                    ESP_LOGE(TAG_IO, "Falha ao limpar historico de alarmes: %s",
+                             esp_err_to_name(clear_err));
+                }
+                app_alarm_monitor_reset();
+            }
             esp_err_t err = lot_started
                 ? app_lot_store_save(&lot_start_datetime)
                 : app_lot_store_clear();
@@ -102,6 +111,10 @@ void io_task(void *pvParameters){
                 ESP_LOGE(TAG_IO, "Falha ao persistir estado do lote: %s", esp_err_to_name(err));
             }
         }
+
+        // Persiste novos cruzamentos de faixa antes de atualizar os alarmes de controle.
+        app_alarm_monitor_update(&ambience_snapshot, monitor_active);
+        app_ambience_control_update(&ambience_snapshot, now_ms, monitor_active);
 
         vTaskDelay(pdMS_TO_TICKS(50));
     }

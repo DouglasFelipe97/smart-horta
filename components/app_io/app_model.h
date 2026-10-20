@@ -47,6 +47,12 @@ typedef enum {
     APP_AMBIENCE_MODE_EDIT_CURVE,
 } app_ambience_mode_t;
 
+// Submenu Opcoes dentro de Ajustes.
+typedef enum {
+    APP_OPTIONS_MODE_NONE = 0,
+    APP_OPTIONS_MODE_MENU,
+} app_options_mode_t;
+
 // Um ponto da curva, com metas em unidades inteiras escaladas e contagens
 // de canais (0..2 por tipo de equipamento).
 typedef struct {
@@ -112,8 +118,11 @@ typedef struct {
     int adc_raw;                                                // Ultima amostra ADC do teclado.
     uint8_t menu_index;                                        // Cursor do menu principal.
     uint8_t settings_index;                                    // Cursor de Ajustes.
+    uint16_t report_count;                                     // Quantidade de alarmes persistidos.
+    uint16_t report_index;                                     // Posicao relativa ao mais recente.
     app_lot_mode_t settings_lot_mode;                           // Subfluxo de lote.
     bool settings_editing_datetime;                            // Editor do RTC aberto.
+    app_options_mode_t settings_options_mode;                   // Submenu Opcoes aberto.
     app_ambience_mode_t ambience_mode;                          // Lista/editor de curvas.
     uint8_t ambience_curve_index;                              // Curva selecionada (0..4).
     uint8_t ambience_field_index;                              // Campo selecionado (0..7).
@@ -207,6 +216,8 @@ bool app_model_take_ambience_write_request(app_ambience_curve_t curves[APP_AMBIE
 void app_model_request_ambience_write(void);
 // Publica estado de alarme para display e buzzer.
 void app_model_set_ambience_alarm_active(bool active);
+// Atualiza contagem e limita a selecao atual do historico de relatorios.
+void app_model_set_report_count(uint16_t count);
 
 // Zera status e telemetria das sondas para iniciar um fluxo sem dados antigos.
 void app_model_reset_probe_install_data(void);

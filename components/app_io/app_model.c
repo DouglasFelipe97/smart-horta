@@ -12,7 +12,10 @@ typedef struct {
     // Cursor e subfluxos temporarios da interface.
     uint8_t menu_index;
     uint8_t settings_index;
+    uint16_t report_count;
+    uint16_t report_index;
     app_lot_mode_t settings_lot_mode;
+    app_options_mode_t settings_options_mode;
     bool lot_started;
     app_datetime_t lot_start_datetime;
     app_datetime_t edit_lot_datetime;
@@ -90,6 +93,7 @@ static void reset_settings_submenus(void)
 // Cancela modos transitorios de Ajustes sem apagar valores configurados.
 {
     s_model.settings_lot_mode = APP_LOT_MODE_NONE;
+    s_model.settings_options_mode = APP_OPTIONS_MODE_NONE;
     s_model.settings_editing_datetime = false;
     s_model.ambience_mode = APP_AMBIENCE_MODE_NONE;
     s_model.settings_buzzer_mode = APP_BUZZER_MODE_NONE;
@@ -535,7 +539,10 @@ void app_model_get_snapshot(app_state_snapshot_t *snapshot)
     snapshot->adc_raw = s_model.adc_raw;
     snapshot->menu_index = s_model.menu_index;
     snapshot->settings_index = s_model.settings_index;
+    snapshot->report_count = s_model.report_count;
+    snapshot->report_index = s_model.report_index;
     snapshot->settings_lot_mode = s_model.settings_lot_mode;
+    snapshot->settings_options_mode = s_model.settings_options_mode;
     snapshot->settings_editing_datetime = s_model.settings_editing_datetime;
     snapshot->ambience_mode = s_model.ambience_mode;
     snapshot->ambience_curve_index = s_model.ambience_curve_index;
@@ -632,6 +639,7 @@ void app_model_process_key(app_key_t key)
                     s_model.settings_index = 0;
                 } else if (s_model.menu_index == 1U) {
                     s_model.screen = APP_SCREEN_MENU_REPORTS;
+                    s_model.report_index = 0;
                 } else {
                     s_model.screen = APP_SCREEN_MENU_ABOUT;
                 }
@@ -737,15 +745,22 @@ void app_model_process_key(app_key_t key)
                 } else if (key == APP_KEY_BACK) {
                     s_model.ambience_mode = APP_AMBIENCE_MODE_CURVE_LIST;
                 }
-            } else if (s_model.settings_buzzer_mode == APP_BUZZER_MODE_MENU) {
-                if (key == APP_KEY_UP) {
-                    s_model.buzzer_index = (s_model.buzzer_index + APP_BUZZER_MENU_ITEMS - 1U) % APP_BUZZER_MENU_ITEMS;
-                } else if (key == APP_KEY_DOWN) {
-                    s_model.buzzer_index = (s_model.buzzer_index + 1U) % APP_BUZZER_MENU_ITEMS;
+            } else if (s_model.settings_options_mode == APP_OPTIONS_MODE_MENU) {
+                if (s_model.settings_buzzer_mode == APP_BUZZER_MODE_MENU) {
+                    if (key == APP_KEY_UP) {
+                        s_model.buzzer_index = (s_model.buzzer_index + APP_BUZZER_MENU_ITEMS - 1U) % APP_BUZZER_MENU_ITEMS;
+                    } else if (key == APP_KEY_DOWN) {
+                        s_model.buzzer_index = (s_model.buzzer_index + 1U) % APP_BUZZER_MENU_ITEMS;
+                    } else if (key == APP_KEY_ENTER) {
+                        s_model.key_beep_enabled = (s_model.buzzer_index == 0U);
+                    } else if (key == APP_KEY_BACK) {
+                        s_model.settings_buzzer_mode = APP_BUZZER_MODE_NONE;
+                    }
                 } else if (key == APP_KEY_ENTER) {
-                    s_model.key_beep_enabled = (s_model.buzzer_index == 0U);
+                    s_model.settings_buzzer_mode = APP_BUZZER_MODE_MENU;
+                    s_model.buzzer_index = s_model.key_beep_enabled ? 0U : 1U;
                 } else if (key == APP_KEY_BACK) {
-                    s_model.settings_buzzer_mode = APP_BUZZER_MODE_NONE;
+                    s_model.settings_options_mode = APP_OPTIONS_MODE_NONE;
                 }
             } else if (s_model.settings_probe_mode == APP_PROBE_MODE_MENU) {
                 // Submenu "Instalar Sondas": navega entre Instalar, Desinstalar e Sondas.
@@ -795,19 +810,28 @@ void app_model_process_key(app_key_t key)
                         s_model.ambience_mode = APP_AMBIENCE_MODE_CURVE_LIST;
                         s_model.ambience_curve_index = 0;
                         s_model.ambience_edit_session_dirty = false;
+                    } else if (s_model.settings_index == 3U) {
+                        s_model.settings_options_mode = APP_OPTIONS_MODE_MENU;
                     } else if (s_model.settings_index == 4U) {
                         // Entra no gerenciador de sondas a partir de Ajustes.
                         s_model.settings_probe_mode = APP_PROBE_MODE_MENU;
                         s_model.probe_menu_index = 0;
-                    } else if (s_model.settings_index == 3U) {
-                        s_model.settings_buzzer_mode = APP_BUZZER_MODE_MENU;
-                        s_model.buzzer_index = s_model.key_beep_enabled ? 0U : 1U;
                     }
                 }
             }
             break;
 
         case APP_SCREEN_MENU_REPORTS:
+            if (s_model.report_count > 0U && key == APP_KEY_UP) {
+                s_model.report_index = (uint16_t)((s_model.report_index + 1U) % s_model.report_count);
+            } else if (s_model.report_count > 0U && key == APP_KEY_DOWN) {
+                s_model.report_index = s_model.report_index == 0U
+                    ? (uint16_t)(s_model.report_count - 1U)
+                    : (uint16_t)(s_model.report_index - 1U);
+            } else if (key == APP_KEY_BACK) {
+                s_model.screen = APP_SCREEN_MENU;
+            }
+            break;
         case APP_SCREEN_MENU_ABOUT:
             if (key == APP_KEY_BACK) {
                 s_model.screen = APP_SCREEN_MENU;
@@ -1022,6 +1046,19 @@ void app_model_set_ambience_alarm_active(bool active)
 {
     lock_model();
     s_model.ambience_alarm_active = active;
+    unlock_model();
+}
+
+void app_model_set_report_count(uint16_t count)
+// Sincroniza a quantidade de eventos com o cache mantido pelo armazenamento.
+{
+    lock_model();
+    s_model.report_count = count;
+    if (count == 0U) {
+        s_model.report_index = 0;
+    } else if (s_model.report_index >= count) {
+        s_model.report_index = (uint16_t)(count - 1U);
+    }
     unlock_model();
 }
 

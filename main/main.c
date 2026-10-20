@@ -11,6 +11,7 @@
 #include "app_storage.h"
 #include "app_lot_store.h"
 #include "app_ambience_store.h"
+#include "app_alarm_store.h"
 
 // Mesma prioridade para as duas tasks, conforme solicitado.
 #define APP_ADC_TASK_PRIORITY     6
@@ -82,6 +83,12 @@ void app_main(void)
         } else if (ambience_load_err != ESP_ERR_NOT_FOUND) {
             ESP_LOGW(TAG_MAIN, "Configuracao de ambiencia invalida ou inacessivel: %s",
                      esp_err_to_name(ambience_load_err));
+        }
+
+        esp_err_t alarm_load_err = app_alarm_store_init();
+        if (alarm_load_err != ESP_OK) {
+            ESP_LOGW(TAG_MAIN, "Historico de alarmes indisponivel: %s",
+                     esp_err_to_name(alarm_load_err));
         }
     }
 

@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include "app_pcf8574.h"
 #include "app_pin_config.h"
+#include "app_alarm_store.h"
 #include "esp_log.h"
 
 #define APP_AMBIENCE_TRIGGER_DELAY_MS 30000U
@@ -163,6 +164,7 @@ void app_ambience_control_update(const app_state_snapshot_t *snapshot,
     bool trigger[APP_AMBIENCE_CONDITION_COUNT] = {false};
     bool hold[APP_AMBIENCE_CONDITION_COUNT] = {false};
     float max_deviation[APP_AMBIENCE_CONDITION_COUNT] = {0.0f};
+    uint8_t alarm_probe_id[APP_AMBIENCE_CONDITION_COUNT] = {0};
     uint8_t curve_index = 0;
     app_ambience_targets_t targets = targets_for_age(snapshot, snapshot->lot_age_days, &curve_index);
     const app_ambience_curve_t *curve = &snapshot->ambience_curves[curve_index];
@@ -178,6 +180,10 @@ void app_ambience_control_update(const app_state_snapshot_t *snapshot,
             float hot_limit = targets.air_temperature + APP_AMBIENCE_TEMPERATURE_LIMIT_C;
             float hot_clear = hot_limit - APP_AMBIENCE_TEMPERATURE_HYSTERESIS_C;
             if (reading->air_temperature >= hot_limit) {
+                if (!trigger[APP_AMBIENCE_CONDITION_AIR_HOT] ||
+                    reading->air_temperature - hot_limit > max_deviation[APP_AMBIENCE_CONDITION_AIR_HOT]) {
+                    alarm_probe_id[APP_AMBIENCE_CONDITION_AIR_HOT] = reading->probe_id;
+                }
                 trigger[APP_AMBIENCE_CONDITION_AIR_HOT] = true;
                 float deviation = reading->air_temperature - hot_limit;
                 if (deviation > max_deviation[APP_AMBIENCE_CONDITION_AIR_HOT]) {
@@ -191,6 +197,10 @@ void app_ambience_control_update(const app_state_snapshot_t *snapshot,
             float air_dry_limit = targets.air_humidity - APP_AMBIENCE_HUMIDITY_LIMIT_PERCENT;
             float air_dry_clear = air_dry_limit + APP_AMBIENCE_HUMIDITY_HYSTERESIS_PERCENT;
             if (reading->air_humidity <= air_dry_limit) {
+                if (!trigger[APP_AMBIENCE_CONDITION_AIR_DRY] ||
+                    air_dry_limit - reading->air_humidity > max_deviation[APP_AMBIENCE_CONDITION_AIR_DRY]) {
+                    alarm_probe_id[APP_AMBIENCE_CONDITION_AIR_DRY] = reading->probe_id;
+                }
                 trigger[APP_AMBIENCE_CONDITION_AIR_DRY] = true;
                 float deviation = air_dry_limit - reading->air_humidity;
                 if (deviation > max_deviation[APP_AMBIENCE_CONDITION_AIR_DRY]) {
@@ -204,6 +214,10 @@ void app_ambience_control_update(const app_state_snapshot_t *snapshot,
             float air_humid_limit = targets.air_humidity + APP_AMBIENCE_HUMIDITY_LIMIT_PERCENT;
             float air_humid_clear = air_humid_limit - APP_AMBIENCE_HUMIDITY_HYSTERESIS_PERCENT;
             if (reading->air_humidity >= air_humid_limit) {
+                if (!trigger[APP_AMBIENCE_CONDITION_AIR_HUMID] ||
+                    reading->air_humidity - air_humid_limit > max_deviation[APP_AMBIENCE_CONDITION_AIR_HUMID]) {
+                    alarm_probe_id[APP_AMBIENCE_CONDITION_AIR_HUMID] = reading->probe_id;
+                }
                 trigger[APP_AMBIENCE_CONDITION_AIR_HUMID] = true;
                 float deviation = reading->air_humidity - air_humid_limit;
                 if (deviation > max_deviation[APP_AMBIENCE_CONDITION_AIR_HUMID]) {
@@ -217,6 +231,10 @@ void app_ambience_control_update(const app_state_snapshot_t *snapshot,
             float soil_dry_limit = targets.soil_humidity - APP_AMBIENCE_HUMIDITY_LIMIT_PERCENT;
             float soil_dry_clear = soil_dry_limit + APP_AMBIENCE_HUMIDITY_HYSTERESIS_PERCENT;
             if (reading->soil_humidity <= soil_dry_limit) {
+                if (!trigger[APP_AMBIENCE_CONDITION_SOIL_DRY] ||
+                    soil_dry_limit - reading->soil_humidity > max_deviation[APP_AMBIENCE_CONDITION_SOIL_DRY]) {
+                    alarm_probe_id[APP_AMBIENCE_CONDITION_SOIL_DRY] = reading->probe_id;
+                }
                 trigger[APP_AMBIENCE_CONDITION_SOIL_DRY] = true;
                 float deviation = soil_dry_limit - reading->soil_humidity;
                 if (deviation > max_deviation[APP_AMBIENCE_CONDITION_SOIL_DRY]) {
@@ -233,6 +251,23 @@ void app_ambience_control_update(const app_state_snapshot_t *snapshot,
         if (s_condition_active[condition] && !hold[condition]) {
             s_condition_active[condition] = false;
         } else if (!s_condition_active[condition] && trigger[condition]) {
+            static const app_alarm_type_t alarm_types[APP_AMBIENCE_CONDITION_COUNT] = {
+                APP_ALARM_AMBIENCE_AIR_HOT,
+                APP_ALARM_AMBIENCE_AIR_DRY,
+                APP_ALARM_AMBIENCE_AIR_HUMID,
+                APP_ALARM_AMBIENCE_SOIL_DRY,
+            };
+            app_alarm_event_t event = {
+                .type = alarm_types[condition],
+                .probe_id = alarm_probe_id[condition],
+                .datetime = snapshot->datetime,
+                .lot_age_days = snapshot->lot_age_days,
+            };
+            esp_err_t err = app_alarm_store_append(&event);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG_AMBIENCE_CONTROL, "Falha ao registrar alarme de ambiencia: %s",
+                         esp_err_to_name(err));
+            }
             s_condition_active[condition] = true;
             s_condition_started_ms[condition] = now_ms;
         }
