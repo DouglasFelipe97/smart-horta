@@ -9,6 +9,50 @@ Este guia descreve, em detalhe, como funciona a arquitetura da secao de sondas:
 
 ## 1. Arquitetura Geral
 
+## Correcao de comunicacao de 2026-10-22
+
+- A central preserva respostas UART fragmentadas entre os ticks da task de IO.
+   Antes, uma leitura parcial era consumida e descartada, perdendo ACK/telemetria.
+- Frames completos so sao entregues apos validar versao, tamanho e CRC.
+   Frames consecutivos nao sao descartados junto com o primeiro.
+- Na sonda TTU, USART1 recebe por interrupcao e guarda ate 127 bytes enquanto
+   o loop atende o SHT30. A resposta aguarda 2 ticks de 1 ms antes de elevar PA8;
+   PA8 so volta a zero depois de TC, incluindo o ultimo stop bit.
+- Repetir a atribuicao do mesmo ID reenvia o ACK sem regravar a flash.
+- O ACK TTU de instalacao agora inclui 6 bytes de telemetria, como a resposta
+   `0x20`: temperatura do ar, umidade do ar e umidade do solo, em decimos.
+   A central continua aceitando ACK legado sem payload e o layout de 8 bytes.
+- O snapshot inicial da TTU e zero ate a primeira amostragem valida do SHT30.
+   A atualizacao continua ocorre na tela Sondas ou durante um lote ativo.
+   Solo ainda nao possui sensor implementado na TTU; umidade e placeholder e a
+   central replica temperatura do ar quando nao recebe temperatura de solo.
+
+### Teste host da central
+
+Executar na raiz de `smart-horta` (requer compilador C no Linux):
+
+```sh
+sed '/^#include /d' components/app_io/probe_install.c | cc -std=c11 -Wall -Wextra -Werror -Wno-unused-variable -fsanitize=address,undefined -include "$PWD/tests/host/test_probe_install.c" -x c - -o /tmp/test-probe-install
+/tmp/test-probe-install
+```
+
+O teste compila a implementacao real com substitutos das APIs ESP-IDF/modelo.
+Cobre ACK legado e ACK com leituras fragmentados, telemetria byte a byte,
+frames consecutivos, CRC invalido, instalacao e polling. Nao substitui build
+ESP-IDF nem validacao eletrica.
+
+### Validacao em bancada
+
+1. Recompilar e gravar os dois firmwares, central e sonda.
+2. Conferir GPIO4 da central e PA8 da TTU ligados a DE e /RE dos respectivos
+    transceivers: alto transmite, baixo recebe. Manter GND comum.
+3. Desinstalar e reinstalar com somente uma sonda virgem no barramento.
+4. No osciloscopio, consultar PA8 e PA9: apos a central liberar o barramento,
+    PA8 deve subir durante a resposta e cair somente depois do ultimo stop bit.
+    Descoberta tem 9 bytes; ACK TTU e leitura tem 15 bytes (aprox. 15,6 ms em 9600 8N1).
+5. Abrir Sondas e verificar atualizacoes de temperatura/umidade do ar apos a
+    primeira amostragem. O LED apagado sozinho nao comprova recebimento do ACK.
+
 ## 0. Atualizacao de 2026-10-14
 
 Esta revisao adiciona os seguintes comportamentos solicitados para a UX de campo:

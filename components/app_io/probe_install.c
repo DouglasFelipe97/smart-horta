@@ -275,12 +275,15 @@ static bool parse_probe_frame(const uint8_t *frame,
 }
 
 // Leitura nao bloqueante do RX:
-// - coleta bytes disponiveis no instante atual
-// - tenta localizar um frame valido dentro do buffer
-// - recorta para o frame encontrado (memmove)
+// - preserva fragmentos entre chamadas
+// - valida tamanho, versao e CRC antes de entregar um frame
+// - deixa os frames seguintes disponiveis para a proxima chamada
 static bool uart_read_probe_frame(uint8_t *buf, size_t buf_size, size_t *out_len)
-// Le bytes disponiveis sem bloquear e recorta o primeiro frame delimitado.
+// Acumula bytes sem bloquear e entrega o primeiro frame valido completo.
 {
+    static uint8_t pending[PROBE_UART_RX_BUFFER_SIZE];
+    static size_t pending_len;
+
     if (buf == NULL || out_len == NULL || buf_size < PROBE_FRAME_TX_SIZE) {
         return false;
     }
@@ -291,29 +294,40 @@ static bool uart_read_probe_frame(uint8_t *buf, size_t buf_size, size_t *out_len
         return false;
     }
 
-    int read_len = uart_read_bytes(PROBE_UART_PORT, buf, buf_size, 0);
-    if (read_len < PROBE_FRAME_TX_SIZE) {
-        return false;
-    }
+    uint8_t byte;
+    while (uart_read_bytes(PROBE_UART_PORT, &byte, 1U, 0) == 1) {
+        pending[pending_len++] = byte;
 
-    for (int i = 0; i <= (read_len - PROBE_FRAME_TX_SIZE); i++) {
-        if (buf[i] != PROBE_FRAME_DELIMITER) {
-            continue;
+        while (pending_len > 0U) {
+            if (pending[0] != PROBE_FRAME_DELIMITER ||
+                (pending_len >= 2U && pending[1] != PROBE_SW_VERSION)) {
+                memmove(pending, pending + 1U, --pending_len);
+                continue;
+            }
+            if (pending_len < 3U) {
+                break;
+            }
+
+            size_t candidate_len = (size_t)pending[2] + 6U;
+            if (candidate_len < PROBE_FRAME_TX_SIZE || candidate_len > sizeof(pending)) {
+                memmove(pending, pending + 1U, --pending_len);
+                continue;
+            }
+            if (pending_len < candidate_len) {
+                break;
+            }
+
+            if (parse_probe_frame(pending, candidate_len, NULL, NULL, NULL, NULL)) {
+                if (candidate_len <= buf_size) {
+                    memcpy(buf, pending, candidate_len);
+                    *out_len = candidate_len;
+                    memmove(pending, pending + candidate_len, pending_len - candidate_len);
+                    pending_len -= candidate_len;
+                    return true;
+                }
+            }
+            memmove(pending, pending + 1U, --pending_len);
         }
-
-        uint8_t payload_len = buf[i + 2];
-        size_t candidate_len = (size_t)payload_len + 6U;
-        if ((i + (int)candidate_len) > read_len || candidate_len > buf_size) {
-            continue;
-        }
-
-        if (buf[i + (int)candidate_len - 1] != PROBE_FRAME_DELIMITER) {
-            continue;
-        }
-
-        memmove(buf, &buf[i], candidate_len);
-        *out_len = candidate_len;
-        return true;
     }
 
     return false;
