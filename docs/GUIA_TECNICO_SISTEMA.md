@@ -206,8 +206,10 @@ O fluxo de Ajustes esta implementado como `APP_SCREEN_MENU_SETTINGS` mais
 submodos, nao como uma tela raiz diferente por opcao. A lista atual de Ajustes e
 `Lote`, `Data`, `Ambiencia`, `Opcoes` e `Instalar Sondas`. Opcoes atualmente
 contém o item `Buzzer`, que apresenta `Habilitar`/`Desabilitar`. ENTER aplica a
-escolha; BACK retorna um nivel. A preferencia de beep e apenas RAM e volta ao
-default habilitado apos reinicializacao.
+escolha; BACK retorna um nivel. Quando a escolha muda, a task de I/O grava a
+preferencia de beep na AT25SF321B, fora do mutex do modelo. No boot, o valor e
+restaurado antes de iniciar as tasks. Sem registro valido, o default e habilitado.
+Essa opcao controla apenas o beep das teclas, nao o buzzer de alarme ambiental.
 
 O menu principal e Ajustes usam cursores circulares com UP/DOWN. Sem tecla por
 30 s, `app_model_check_inactivity_timeout()` retorna para HOME e limpa submodos,
@@ -491,6 +493,7 @@ aplicacao e serializa operacoes SPI.
 
 | Dado | Endereco | Formato/conteudo | Politica |
 |---|---:|---|---|
+| Opcoes | `0x3FC000` | SHCF v1; beep ON/OFF + CRC32; 10 bytes | Erase/write/read-back somente quando a escolha muda. |
 | Historico | `0x3FD000` | SHAL v1; cabecalho16 + 240x17 bytes; CRC32 | Append-only; apaga ao iniciar novo lote. |
 | Curvas | `0x3FE000` | SHAM v2; flag configurada + 5 curvas + CRC32 | Erase/write/read-back apos debounce. |
 | Lote | `0x3FF000` | SHLT v1; flag + data/hora + CRC32 | Erase/write/read-back ao salvar; erase ao finalizar. |
@@ -500,6 +503,30 @@ de padding/alinhamento de structs. Lote e curvas so sao publicados no modelo
 depois de formato, versao, CRC e faixas passarem na validacao. Historico para no
 primeiro registro vazio ou invalido; um slot possivelmente parcial bloqueia novos
 appends ate a limpeza do setor.
+
+O registro de opcoes ocupa um setor separado, sem alterar lote, curvas ou alarmes.
+Confirmar o mesmo valor no menu nao agenda gravacao; o store tambem ignora um
+registro identico ao ja salvo. Em caso de falha, a task de I/O remarca o pedido
+e tenta novamente com intervalo minimo de 1 segundo, usando o valor atual.
+A gravacao normal acontece no proximo ciclo de I/O; nao desligue a placa durante
+a operacao de erase/write. Uma interrupcao da escrita pode invalidar o registro,
+fazendo o boot usar o default habilitado.
+
+### Teste da preferencia de beep
+
+Na raiz de `smart-horta`, com compilador C no Linux:
+
+```sh
+sed '/^#include /d' components/app_io/app_model.c components/app_io/app_settings_store.c | cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I components/app_io -include "$PWD/tests/host/test_settings_store.c" -x c - -o /tmp/test-settings-store
+/tmp/test-settings-store
+```
+
+O teste usa modelo e store reais com flash/FreeRTOS simulados. Cobre alteracao
+ON/OFF pelo menu, reboot simulado, pedido/retry, CRC, falhas de acesso, ausencia
+de escrita redundante e isolamento dos setores vizinhos.
+
+Na placa, confirmar Desabilitar, aguardar 1 segundo e reiniciar. Verificar que
+nao ha beep ao navegar; repetir com Habilitar e confirmar o retorno do beep.
 
 ## 13. Inventario de Arquivos
 
@@ -531,6 +558,7 @@ appends ate a limpeza do setor.
 | `app_alarm_monitor.h/.c` | Faixas fixas de alarme e deteccao de transicoes por sonda. |
 | `app_alarm_store.h/.c` | Formato SHAL, cache RAM, CRC, append e limpeza por novo lote. |
 | `app_lot_store.h/.c` | Formato SHLT, validacao de data, load/save/clear do lote. |
+| `app_settings_store.h/.c` | Formato SHCF, CRC, load/save e verificacao da preferencia de beep. |
 | `app_storage.h/.c` | Fachada sincronizada, fila de pedidos e worker unico da flash. |
 | `at25sf321b.h/.c` | Driver SPI de baixo nivel para leitura, page program, status e erase. |
 | `app_pcf8574.h/.c` | Mapa de canais, mutex e atualizacao de saidas no expansor I2C. |

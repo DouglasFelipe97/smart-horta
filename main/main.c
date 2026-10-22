@@ -12,6 +12,7 @@
 #include "app_lot_store.h"
 #include "app_ambience_store.h"
 #include "app_alarm_store.h"
+#include "app_settings_store.h"
 
 // Mesma prioridade para as duas tasks, conforme solicitado.
 #define APP_ADC_TASK_PRIORITY     6
@@ -64,6 +65,17 @@ void app_main(void)
     if (storage_err != ESP_OK) {
         ESP_LOGE(TAG_MAIN, "Falha ao inicializar armazenamento flash: %s", esp_err_to_name(storage_err));
     } else {
+        bool key_beep_enabled;
+        esp_err_t settings_load_err = app_settings_store_load(&key_beep_enabled);
+        if (settings_load_err == ESP_OK) {
+            app_model_set_key_beep_enabled(key_beep_enabled);
+            ESP_LOGI(TAG_MAIN, "Opcao do buzzer restaurada da flash: %s",
+                     key_beep_enabled ? "ON" : "OFF");
+        } else if (settings_load_err != ESP_ERR_NOT_FOUND) {
+            ESP_LOGW(TAG_MAIN, "Opcao do buzzer invalida ou inacessivel: %s",
+                     esp_err_to_name(settings_load_err));
+        }
+
         app_datetime_t lot_start_datetime;
         esp_err_t lot_load_err = app_lot_store_load(&lot_start_datetime);
         if (lot_load_err == ESP_OK) {

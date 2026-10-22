@@ -12,6 +12,7 @@
 #include "app_alarm_monitor.h"
 #include "app_alarm_store.h"
 #include "app_lot_store.h"
+#include "app_settings_store.h"
 // #include "app_menu_functions"
 #include "keyboard.h"
 #include "probe_install.h"
@@ -27,6 +28,8 @@ void io_task(void *pvParameters){
     uint32_t last_buzzer_toggle_ms = 0;
     uint32_t last_alarm_toggle_ms = 0;
     bool alarm_buzzer_state = false;
+    bool settings_write_failed = false;
+    uint32_t last_settings_write_ms = 0;
 
     // Inicializa UART e estado do instalador de sondas.
     probe_install_manager_init();
@@ -109,6 +112,18 @@ void io_task(void *pvParameters){
                 : app_lot_store_clear();
             if (err != ESP_OK) {
                 ESP_LOGE(TAG_IO, "Falha ao persistir estado do lote: %s", esp_err_to_name(err));
+            }
+        }
+
+        bool key_beep_enabled;
+        if ((!settings_write_failed || (now_ms - last_settings_write_ms) >= 1000U) &&
+            app_model_take_key_beep_write_request(&key_beep_enabled)) {
+            esp_err_t err = app_settings_store_save(key_beep_enabled);
+            last_settings_write_ms = now_ms;
+            settings_write_failed = (err != ESP_OK);
+            if (settings_write_failed) {
+                ESP_LOGE(TAG_IO, "Falha ao salvar opcao do buzzer: %s", esp_err_to_name(err));
+                app_model_request_key_beep_write();
             }
         }
 

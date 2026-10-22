@@ -7,6 +7,17 @@ Este guia descreve, em detalhe, como funciona a arquitetura da secao de sondas:
 - sincronizacao com UI
 - comportamento temporal das tasks/FSMs
 
+Referencia de bancada, conferida com os firmwares em 2026-10-22:
+- [Formato, tamanho e CRC](#21-configuracao-e-formato)
+- [Broadcast de descoberta e resposta](#23-broadcast-de-descoberta-0x11)
+- [Instalacao S1 a S4](#24-atribuicao-de-id-0x10)
+- [ACK atual e ACK legado](#25-ack-de-instalacao)
+- [Desinstalacao S1 a S4](#26-desinstalacao-0x12)
+- [Leitura e respostas S1 a S4](#27-consulta-de-leitura-0x20)
+- [Decodificacao das medicoes](#28-payload-de-telemetria)
+- [Sequencia completa de captura](#29-sequencia-completa-para-s1)
+- [Tempos, DE-RE e diagnostico](#210-tempos-e-direcao-do-barramento)
+
 ## 1. Arquitetura Geral
 
 ## Correcao de comunicacao de 2026-10-22
@@ -112,24 +123,285 @@ Campos de identidade por sonda no snapshot:
 
 ## 2. Protocolo de Frame UART
 
-Formato de 9 bytes:
-1. Byte 0  : `0x55` (inicio)
-2. Byte 1  : versao (atual `0x01`)
-3. Byte 2  : tamanho do payload
-4. Byte 3  : registrador/comando
-5. Byte 4  : ID/alvo
-6. Byte 5  : reservado
-7. Byte 6  : CRC low
-8. Byte 7  : CRC high
-9. Byte 8  : `0x55` (fim)
+### 2.1 Configuracao e formato
 
-CRC:
-- Algoritmo: CRC-16 Modbus
-- Base de calculo: bytes da versao ate o reservado (sem delimitadores)
+UART: **9600 baud, 8 bits, sem paridade, 1 stop bit (8N1)**, sem controle de
+fluxo. No TX/RX logico, repouso alto, start bit baixo, dados LSB primeiro e
+decodificacao nao invertida. O enlace e RS485 half-duplex com controle DE-/RE.
+Este e um protocolo proprio: somente o algoritmo de CRC e o do Modbus.
 
-Registradores usados:
-- `0x10`: instalacao/configuracao
-- `0x20`: leitura de telemetria
+Todos os numeros nos frames abaixo estao em **hexadecimal**. Cada par representa
+um byte binario; nao transmitir o texto ASCII `55 01 ...` por um terminal serial.
+S1 a S4 correspondem aos IDs `01` a `04`; `FF` representa a sonda desinstalada.
+
+```text
+55 01 LL RR ID 00 [DADOS...] CRC_LO CRC_HI 55
+```
+
+| Offset, em decimal | Campo | Significado |
+|---|---|---|
+| 0 | `55` | Delimitador inicial. |
+| 1 | `01` | Versao do protocolo. |
+| 2 | `LL` | Tamanho de registrador + ID + reservado + dados. |
+| 3 | `RR` | Registrador/comando. |
+| 4 | `ID` | Alvo no comando; identidade da sonda na resposta. |
+| 5 | `00` | Reservado; os emissores atuais enviam zero. |
+| 6 em diante | Dados opcionais | Medicoes, quando presentes. |
+| Total - 3 | `CRC_LO` | Byte menos significativo do CRC. |
+| Total - 2 | `CRC_HI` | Byte mais significativo do CRC. |
+| Total - 1 | `55` | Delimitador final. |
+
+**LL nao e o tamanho total do frame, nem apenas o tamanho das medicoes.**
+Se ha D bytes de dados, LL = 3 + D e o tamanho total e LL + 6 = 9 + D.
+
+| Uso | Dados | LL | Total |
+|---|---:|---|---:|
+| Comandos, descoberta/resposta e ACK legado | 0 bytes | `03` | 9 bytes |
+| ACK atual TTU e resposta atual de leitura | 6 bytes | `09` | 15 bytes |
+| Layout estendido aceito pela central | 8 bytes | `0B` | 17 bytes |
+
+Os bytes `55` podem aparecer nos dados ou no CRC; nao existe escape de bytes.
+Para separar frames, respeitar LL, o delimitador final e o CRC, nao apenas procurar
+o proximo `55`. Nao ha numero de transacao nem bit que diferencie TX de resposta.
+
+### 2.2 Calculo de CRC e registradores
+
+CRC-16/Modbus: inicial `FFFF`, polinomio refletido `A001`, processamento LSB
+primeiro e sem XOR final. Calcular sobre **versao + LL + registrador + ID +
+reservado + todos os dados**. Excluir delimitadores e os proprios bytes de CRC.
+Enviar o resultado em little-endian: CRC_LO antes de CRC_HI.
+
+Exemplo de descoberta: calcular sobre `01 03 11 FF 00`; o resultado numerico e
+`7108`, transmitido como `08 71`. Se alterar ID, opcode, tamanho ou medicoes,
+recalcular o CRC. Os exemplos abaixo ja incluem CRC valido.
+
+| Registrador | Central para sonda | Sonda para central |
+|---|---|---|
+| `10` | Atribuir ID `01` a `04`. | ACK com o ID atribuido; TTU atual inclui medicoes. |
+| `11` | Descoberta broadcast, ID `FF`. | Resposta de sonda virgem, ID `FF`. |
+| `12` | Desinstalar o ID indicado. | **Nenhuma resposta/ACK implementado.** |
+| `20` | Consultar medicoes do ID indicado. | Resposta com medicoes e o mesmo ID. |
+
+Nao existe frame NACK/erro. CRC invalido, frame invalido, registrador desconhecido
+ou comando nao aplicavel ao estado/ID sao ignorados em silencio.
+
+### 2.3 Broadcast de descoberta (0x11)
+
+| Direcao | Frame completo |
+|---|---|
+| Central para todas | `55 01 03 11 FF 00 08 71 55` |
+| Sonda virgem para central | `55 01 03 11 FF 00 08 71 55` |
+
+Somente sondas com ID persistido `FF` respondem. Uma sonda instalada fica em
+silencio; a descoberta nao instala, nao apaga ID e nao e consulta de telemetria.
+Comando e resposta sao identicos: confirmar a direcao pelo DE e pelo instante da
+captura. Ver uma copia no RX durante o TX da central pode ser eco, nao resposta.
+
+**Conectar apenas uma sonda virgem por vez.** Nao ha arbitragem, numero de serie
+ou atraso aleatorio: sondas virgens simultaneas podem responder juntas e aceitar
+o mesmo ID. A central repete a descoberta a cada 500 ms enquanto procura sondas.
+
+### 2.4 Atribuicao de ID (0x10)
+
+| Alvo a instalar | Frame central para sonda |
+|---|---|
+| S1 | `55 01 03 10 01 00 19 D1 55` |
+| S2 | `55 01 03 10 02 00 19 21 55` |
+| S3 | `55 01 03 10 03 00 18 B1 55` |
+| S4 | `55 01 03 10 04 00 1A 81 55` |
+
+Uma sonda virgem grava o ID em sua flash interna e responde com ACK. Uma sonda
+que ja tem o mesmo ID reenvia o ACK, sem nova gravacao; uma instalada com ID
+diferente ignora o comando. Exemplo: instalar S2 nao renomeia uma S1 existente.
+Se a gravacao inicial reportar falha, o firmware nao envia ACK.
+
+A central envia uma atribuicao inicial e ate 5 retries, separados por 700 ms.
+Esgotado o limite sem ACK, volta a descoberta. O LED mudar de estado na sonda nao
+comprova que a central recebeu/validou o ACK.
+
+### 2.5 ACK de instalacao
+
+O ACK usa registrador `10` e o ID atribuido. A TTU atual responde com 15 bytes,
+incluindo o snapshot de 6 bytes descrito na secao 2.8. O CRC depende das medicoes;
+nao comparar uma resposta real com um exemplo de valores diferentes.
+
+Exemplos completos com **23,4 graus C, 55,5% de umidade do ar e solo 0,0%**:
+
+| Sonda | ACK atual, sonda para central |
+|---|---|
+| S1 | `55 01 09 10 01 00 EA 00 2B 02 00 00 60 D5 55` |
+| S2 | `55 01 09 10 02 00 EA 00 2B 02 00 00 20 C0 55` |
+| S3 | `55 01 09 10 03 00 EA 00 2B 02 00 00 E1 0C 55` |
+| S4 | `55 01 09 10 04 00 EA 00 2B 02 00 00 A0 EA 55` |
+
+Antes da primeira amostragem valida, o snapshot pode estar zerado:
+
+| Sonda | ACK atual com todos os dados zero |
+|---|---|
+| S1 | `55 01 09 10 01 00 00 00 00 00 00 00 DE 3B 55` |
+| S2 | `55 01 09 10 02 00 00 00 00 00 00 00 9E 2E 55` |
+| S3 | `55 01 09 10 03 00 00 00 00 00 00 00 5F E2 55` |
+| S4 | `55 01 09 10 04 00 00 00 00 00 00 00 1E 04 55` |
+
+**ACK legado:** 9 bytes, sem medicoes, exatamente os mesmos bytes do comando de
+atribuicao de cada ID na secao 2.4. A central ainda o aceita, mas ele nao fornece
+leituras para a tela de instalacao. Confirmar a direcao para nao aceitar um eco
+como evidencia de comunicacao bidirecional. A TTU atual nao emite esse ACK curto.
+
+### 2.6 Desinstalacao (0x12)
+
+| Alvo | Frame central para sonda | Resposta esperada |
+|---|---|---|
+| S1 | `55 01 03 12 01 00 B8 11 55` | Silencio. |
+| S2 | `55 01 03 12 02 00 B8 E1 55` | Silencio. |
+| S3 | `55 01 03 12 03 00 B9 71 55` | Silencio. |
+| S4 | `55 01 03 12 04 00 BB 41 55` | Silencio. |
+
+Somente a sonda instalada com o ID alvo volta a `FF`, grava esse estado e acende
+o LED. Nao ha desinstalacao broadcast `12 FF` implementada: a central percorre
+S1, S2, S3, S4 e repete a sequencia 3 vezes, totalizando 12 comandos.
+O intervalo configurado entre comandos e 80 ms, observado nos ticks da task.
+
+**Nao esperar ACK de desinstalacao.** Para verificar o resultado, com uma unica
+sonda em teste, enviar descoberta `11 FF`: ela deve responder novamente. Uma
+consulta `20` ao ID antigo deve ficar sem resposta. Para comprovar persistencia
+do estado, repetir a verificacao apos reiniciar a sonda.
+
+### 2.7 Consulta de leitura (0x20)
+
+| Sonda | Comando central para sonda |
+|---|---|
+| S1 | `55 01 03 20 01 00 19 DE 55` |
+| S2 | `55 01 03 20 02 00 19 2E 55` |
+| S3 | `55 01 03 20 03 00 18 BE 55` |
+| S4 | `55 01 03 20 04 00 1A 8E 55` |
+
+Somente a sonda instalada com o ID consultado responde. Sonda virgem ou de outro
+ID fica em silencio; `20 FF` nao e leitura broadcast implementada. A resposta de
+telemetria ja e a resposta final: nao existe ACK separado antes/depois dela, nem
+confirmacao adicional enviada pela central.
+
+Respostas completas para **23,4 graus C, 55,5% de umidade do ar e solo 0,0%**:
+
+| Sonda | Resposta sonda para central |
+|---|---|
+| S1 | `55 01 09 20 01 00 EA 00 2B 02 00 00 34 D4 55` |
+| S2 | `55 01 09 20 02 00 EA 00 2B 02 00 00 74 C1 55` |
+| S3 | `55 01 09 20 03 00 EA 00 2B 02 00 00 B5 0D 55` |
+| S4 | `55 01 09 20 04 00 EA 00 2B 02 00 00 F4 EB 55` |
+
+### 2.8 Payload de telemetria
+
+Os dados comecam no offset 6, tanto no ACK atual `10` como na resposta `20`.
+Todos os valores sao inteiros em decimos, little-endian. Dividir por 10 para
+obter graus C ou porcentagem.
+
+| Offset no frame | Tipo | TTU atual, 6 bytes de dados |
+|---|---|---|
+| 6, 7 | int16 com sinal | Temperatura do ar x10. |
+| 8, 9 | uint16 sem sinal | Umidade do ar x10. |
+| 10, 11 | uint16 sem sinal | Umidade do solo x10. |
+| 12, 13 | CRC | CRC_LO, CRC_HI. |
+| 14 | Delimitador | `55`. |
+
+No exemplo das tabelas: `EA 00` = 234 = 23,4 graus C; `2B 02` = 555 = 55,5%;
+`00 00` = 0 = 0,0%. A TTU atual **ainda nao mede umidade do solo**: envia zero
+como placeholder. Tambem nao transmite temperatura de solo; a central replica
+a temperatura do ar nesse campo. Isso nao e medicao real de temperatura do solo.
+
+Temperatura negativa usa complemento de dois. Exemplo S1 com -5,2 graus C,
+55,5% de umidade do ar e solo 0,0%: `CC FF` = int16(-52).
+
+```text
+55 01 09 20 01 00 CC FF 2B 02 00 00 27 C6 55
+```
+
+A central tambem aceita um layout de 8 bytes de dados: temperatura do ar int16,
+umidade do ar uint16, temperatura do solo int16 e umidade do solo uint16,
+nessa ordem, todos x10 e little-endian. LL = `0B`, total = 17 bytes.
+**A TTU atual nao emite esse layout.** Exemplo sintetico de compatibilidade para
+S1: ar 23,4 graus C / 55,5%; solo 21,0 graus C / 40,0%:
+
+```text
+55 01 0B 20 01 00 EA 00 2B 02 D2 00 90 01 7B E0 55
+```
+
+### 2.9 Sequencia completa para S1
+
+Exemplo com uma sonda inicialmente virgem. As medicoes abaixo sao ilustrativas;
+em bancada o snapshot e o CRC podem variar.
+
+| Passo | Emissor | Frame capturado |
+|---|---|---|
+| 1. Descoberta | Central | `55 01 03 11 FF 00 08 71 55` |
+| 2. Resposta virgem | Sonda | `55 01 03 11 FF 00 08 71 55` |
+| 3. Atribuir S1 | Central | `55 01 03 10 01 00 19 D1 55` |
+| 4. ACK com snapshot | Sonda | `55 01 09 10 01 00 EA 00 2B 02 00 00 60 D5 55` |
+| 5. Consultar S1 | Central | `55 01 03 20 01 00 19 DE 55` |
+| 6. Resposta de leitura | Sonda | `55 01 09 20 01 00 EA 00 2B 02 00 00 34 D4 55` |
+| 7. Desinstalar S1 | Central | `55 01 03 12 01 00 B8 11 55` |
+| 8. Sem ACK | Sonda | Nenhum frame. |
+| 9. Nova descoberta | Central | `55 01 03 11 FF 00 08 71 55` |
+| 10. Resposta virgem | Sonda | `55 01 03 11 FF 00 08 71 55` |
+
+Na interface, a leitura ciclica fica ativa na tela Sondas ou com lote ativo,
+exceto durante instalacao/desinstalacao. A tela Instalar publica o snapshot do
+ACK e segue procurando as outras sondas; nao faz polling continuo das instaladas.
+Para capturar os passos 5 e 6 pelo menu, abrir Sondas apos instalar.
+
+### 2.10 Tempos e direcao do barramento
+
+| Parametro | Referencia para captura |
+|---|---|
+| Tempo de bit em 9600 baud | Aproximadamente 104,17 us. |
+| Tempo de byte em 8N1, 10 bits | Aproximadamente 1,042 ms. |
+| Frame de 9 bytes | Aproximadamente 9,375 ms, sem pausas adicionais. |
+| Frame de 15 bytes | Aproximadamente 15,625 ms, sem pausas adicionais. |
+| Frame de 17 bytes | Aproximadamente 17,708 ms, sem pausas adicionais. |
+| Guarda TTU antes de elevar DE | 2 ticks de 1 ms; alinhamento ao tick altera o tempo observado. |
+| Timeout de resposta da central | 100 ms desde a referencia do envio na FSM de leitura. |
+| Tick da task de I/O | Cerca de 50 ms, mais trabalho e eventuais acessos a flash. |
+| Descoberta / retry de atribuicao | 500 ms / 700 ms; ate 5 retries de atribuicao. |
+| Intervalo minimo configurado entre consultas | 30 ms, observado no tick da task. |
+| Pausa apos consultar S4 | 1200 ms antes de novo scan. |
+| Desinstalacao | 3 ciclos S1 a S4, intervalo configurado de 80 ms. |
+| Parser de entrada TTU | Descarta frame parcial apos 30 ms sem progresso no processamento. |
+| Amostragem do SHT30 | Uma tentativa por segundo; conserva o ultimo valor valido. |
+
+O atraso de resposta nao e exatamente 2 ms apos o comando: o firmware primeiro
+precisa processa-lo, pode estar atendendo sensor e, na instalacao, grava o ID na
+flash antes de enviar ACK. Os intervalos das FSMs tambem sao quantizados pelo
+loop de I/O, nao por um temporizador que garante o instante exato no fio.
+
+| Ponto | RX/repouso | TX | O que observar |
+|---|---|---|---|
+| Central GPIO4, DE e /RE juntos | 0 | 1 | Alto durante comando; baixo para receber resposta. |
+| TTU PA8, DE e /RE juntos | 0 | 1 | Alto durante resposta; baixo somente apos TC/ultimo stop bit. |
+| Central TX17 / RX16 | UART logica | UART logica | Comando em TX17 e resposta em RX16. |
+| TTU PA9 / PA10 | UART logica | UART logica | Comando recebido em PA10 e resposta enviada em PA9. |
+
+Usar GND comum e conferir A/B dos transceivers. A/B e um par diferencial, nao
+uma UART TTL: para decodificacao logica, observar TX/RX dos microcontroladores
+ou DI/RO do transceiver, com instrumento e niveis eletricos apropriados.
+
+### 2.11 Diagnostico rapido
+
+| Captura/sintoma | Interpretacao e proxima verificacao |
+|---|---|
+| Descoberta TX sem resposta | A sonda pode ja estar instalada; conferir LED/ID antes de concluir falha eletrica. |
+| Instalacao repete a cada 700 ms, LED muda | Comando chegou, mas ACK pode nao ter chegado/validado na central; conferir PA8, PA9, RX16 e CRC. |
+| Bytes em PA9, mas nada em RX16 | Conferir DE-/RE, transceivers, alimentacao, A/B e GND. |
+| Sem pulso em PA8 apos comando valido | Conferir opcode, ID e estado instalado/virgem; comandos ignorados nao geram resposta. |
+| Copia identica durante TX da central | Pode ser eco; descoberta e ACK legado sao identicos aos comandos. Conferir DE e timestamps. |
+| Desinstalacao sem resposta | Comportamento normal; verificar com nova descoberta ou consulta ao ID antigo. |
+| Telemetria valida, mas toda zerada | UART respondeu; conferir primeira amostragem, sensor SHT30 e comunicacao I2C. |
+| Leitura de solo sempre zero ou temperatura igual ao ar | Limitacao atual da TTU, nao prova falha RS485. |
+| Sonda instalada nao responde descoberta | Comportamento normal; consultar `20` com o ID instalado. |
+| Resposta aparece em partes no log | Bytes UART podem chegar fragmentados; juntar pelo tamanho antes de verificar CRC. |
+
+Fontes da referencia: [central](../components/app_io/probe_install.c),
+[protocolo TTU](../../sonda-horta/sonda-ttu/Src/probe_protocol.c) e
+[UART/DE da TTU](../../sonda-horta/sonda-ttu/Src/peripherals_init.c).
 
 ## 3. Instalacao por Broadcast (Tela Instalar)
 

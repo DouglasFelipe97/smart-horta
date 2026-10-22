@@ -181,6 +181,10 @@ bool app_model_take_key_press_flag(void);
 // Consulta se o beep de navegacao esta habilitado no menu.
 bool app_model_is_key_beep_enabled(void);
 
+void app_model_set_key_beep_enabled(bool enabled);
+bool app_model_take_key_beep_write_request(bool *enabled);
+void app_model_request_key_beep_write(void);
+
 // Retorna a HOME apos 30 s sem tecla; nao altera persistencia de configuracoes.
 void app_model_check_inactivity_timeout(uint32_t now_ms);
 

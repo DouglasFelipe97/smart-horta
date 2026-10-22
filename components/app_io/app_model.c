@@ -44,6 +44,7 @@ typedef struct {
     app_probe_snapshot_t probes[APP_PROBE_COUNT];
     // Eventos, buffers de edicao, relogio e comandos pendentes aos workers.
     bool key_beep_enabled;
+    bool key_beep_write_pending;
     bool key_press_pending;
     uint8_t datetime_field_index;
     app_screen_t screen;
@@ -752,7 +753,11 @@ void app_model_process_key(app_key_t key)
                     } else if (key == APP_KEY_DOWN) {
                         s_model.buzzer_index = (s_model.buzzer_index + 1U) % APP_BUZZER_MENU_ITEMS;
                     } else if (key == APP_KEY_ENTER) {
-                        s_model.key_beep_enabled = (s_model.buzzer_index == 0U);
+                        bool enabled = (s_model.buzzer_index == 0U);
+                        if (s_model.key_beep_enabled != enabled) {
+                            s_model.key_beep_enabled = enabled;
+                            s_model.key_beep_write_pending = true;
+                        }
                     } else if (key == APP_KEY_BACK) {
                         s_model.settings_buzzer_mode = APP_BUZZER_MODE_NONE;
                     }
@@ -879,6 +884,38 @@ bool app_model_is_key_beep_enabled(void)
     unlock_model();
 
     return enabled;
+}
+
+void app_model_set_key_beep_enabled(bool enabled)
+{
+    lock_model();
+    s_model.key_beep_enabled = enabled;
+    s_model.buzzer_index = enabled ? 0U : 1U;
+    s_model.key_beep_write_pending = false;
+    unlock_model();
+}
+
+bool app_model_take_key_beep_write_request(bool *enabled)
+{
+    if (enabled == NULL) {
+        return false;
+    }
+
+    lock_model();
+    bool pending = s_model.key_beep_write_pending;
+    if (pending) {
+        *enabled = s_model.key_beep_enabled;
+        s_model.key_beep_write_pending = false;
+    }
+    unlock_model();
+    return pending;
+}
+
+void app_model_request_key_beep_write(void)
+{
+    lock_model();
+    s_model.key_beep_write_pending = true;
+    unlock_model();
 }
 
 bool app_model_is_probe_install_screen_active(void)
