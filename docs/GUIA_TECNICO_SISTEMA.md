@@ -392,8 +392,8 @@ O frame base de comando tem nove bytes. A estrutura logica e:
 | Inicio | `0x55` |
 | Versao | `0x01` |
 | Comprimento | Bytes de registrador/ID/reservado mais dados adicionais |
-| Registrador | `0x10` configuracao/IDs; `0x20` leitura |
-| ID | Alvo 1..4 ou broadcast/virgem `0xFF` |
+| Registrador | `0x10` atribuicao; `0x11` descoberta; `0x12` desinstalacao; `0x20` leitura |
+| ID | Alvo 1..4; `0xFF` reservado ao broadcast de descoberta |
 | Reservado | Zero nesta versao |
 | CRC | CRC-16 Modbus, enviado low byte primeiro |
 | Fim | `0x55` |
@@ -416,8 +416,8 @@ protocolo nao inclui identificador de sessao ou contador de sequencia.
 stateDiagram-v2
     [*] --> IDLE
     IDLE --> DISCOVERY: entrar em Instalar
-    DISCOVERY --> DISCOVERY: broadcast ID FF a cada 500 ms
-    DISCOVERY --> WAIT_ACK: resposta valida reg 10 / enviar ID atual
+    DISCOVERY --> DISCOVERY: broadcast reg 11 / ID FF a cada 500 ms
+    DISCOVERY --> WAIT_ACK: resposta valida reg 11 / enviar reg 10 + ID atual
     WAIT_ACK --> WAIT_ACK: retry da atribuicao a cada 700 ms
     WAIT_ACK --> DISCOVERY: cinco retries sem ACK
     WAIT_ACK --> DISCOVERY: ACK valido e ID atual menor que 4
@@ -427,23 +427,22 @@ stateDiagram-v2
     DONE --> IDLE: sair da tela
 ```
 
-Ao entrar, o manager zera placeholders e progresso. Descobre sondas com ID `0xFF`,
-atribui IDs em ordem de 1 a 4 e espera ACK. O ACK deve usar registrador `0x10` e
-ID atual ou `0xFF`. A atribuicao tem ate cinco retransmissoes em intervalos de
-700 ms; esgotadas, a FSM volta a descoberta para aquele proximo ID. Ao completar
-ID 4, publica 4/4 e permanece em DONE ate sair. Sair pausa a rotina; reentrar
-reinicializa o fluxo.
+Ao entrar, o manager zera placeholders e progresso. Descobre sondas virgens com
+ID `0xFF` usando o registrador `0x11`; sondas ja instaladas ignoram esse broadcast.
+A central atribui IDs em ordem de 1 a 4 com o registrador `0x10`; somente sondas
+virgens aceitam a atribuicao e respondem ACK com `0x10` e o novo ID. A atribuicao
+tem ate cinco retransmissoes em intervalos de 700 ms; esgotadas, a FSM volta a
+descoberta para aquele proximo ID. Ao completar ID 4, publica 4/4 e permanece em
+DONE ate sair. Sair pausa a rotina; reentrar reinicializa o fluxo.
+Como as sondas virgens usam o mesmo ID de broadcast, conecte somente uma sonda
+virgem por vez durante a instalacao para evitar respostas simultaneas.
 
 ### Desinstalacao
 
 Ao entrar, percorre tres ciclos logicos, com intervalo de 80 ms entre passos e
-progresso de ID 1..4. Apos 12 passos, mostra conclusao por 500 ms e retorna ao
-submenu de sondas. **Ressalva do codigo atual:** o frame de reset e montado com
-ID `0xFF`; `select_probe_target_address()` e um hook vazio. Assim, o fonte nao
-implementa atualmente um enderecamento fisico independente por ID nessa chamada.
-O efeito real depende do firmware das sondas e da topologia RS-485. Este detalhe
-precisa ser validado no hardware antes de descrever a operacao como reset
-individual confirmado.
+progresso de ID 1..4. Envia o registrador `0x12` com o ID alvo; cada sonda so
+limpa seu ID persistido quando o alvo corresponde ao seu proprio ID. Apos 12
+passos, mostra conclusao por 500 ms e retorna ao submenu de sondas.
 
 ### Polling e monitoramento
 

@@ -6,25 +6,26 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "app_model.h"
+#include "app_pin_config.h"
 
 // -----------------------------------------------------------------------------
 // Configuracao UART e protocolo de sondas
 // -----------------------------------------------------------------------------
-// O mesmo frame base e reutilizado para tres operacoes:
-// 1) Instalacao por descoberta/atribuicao de ID
-// 2) Desinstalacao (forcando ID = 0xFF)
-// 3) Polling ciclico de telemetria (T/U/S)
+// O mesmo frame base e reutilizado para descoberta, instalacao, desinstalacao
+// enderecada e polling ciclico de telemetria (T/U/S).
 // -----------------------------------------------------------------------------
 #define PROBE_UART_PORT            UART_NUM_1
 #define PROBE_UART_BAUDRATE        9600
 #define PROBE_UART_TX_PIN          GPIO_NUM_17
 #define PROBE_UART_RX_PIN          GPIO_NUM_16
-#define PROBE_UART_RE_DE_PIN       GPIO_NUM_4
+// #define PROBE_UART_RE_DE_PIN       GPIO_NUM_4
 #define PROBE_UART_RX_BUFFER_SIZE  256
 
 #define PROBE_FRAME_DELIMITER      0x55
 #define PROBE_SW_VERSION           0x01
 #define PROBE_INSTALL_REGISTER     0x10
+#define PROBE_DISCOVERY_REGISTER   0x11
+#define PROBE_UNINSTALL_REGISTER   0x12
 #define PROBE_READ_REGISTER        0x20
 #define PROBE_PAYLOAD_LENGTH       3
 #define PROBE_FRAME_TX_SIZE        9
@@ -211,19 +212,12 @@ static size_t build_probe_frame(uint8_t reg, uint8_t id, uint8_t reserved,
     return PROBE_FRAME_TX_SIZE;
 }
 
-static size_t build_probe_uninstall_frame(uint8_t *out_buf, size_t out_buf_len)
-// Comando de reset da sonda para o ID broadcast 0xFF.
+static size_t build_probe_uninstall_frame(uint8_t target_id, uint8_t *out_buf,
+                                          size_t out_buf_len)
+// Comando de reset enderecado a uma sonda especifica.
 {
-    // Reutiliza framing padrao: campo de ID gravado recebe 0xFF (estado virgem).
-    return build_probe_frame(PROBE_INSTALL_REGISTER, PROBE_DISCOVERY_ID, 0x00, out_buf, out_buf_len);
-}
-
-static void select_probe_target_address(uint8_t target_id)
-// Ponto de extensao para topologias que selecionem alvo fora do frame.
-{
-    // Hook para selecao de endereco fisico/logico fora do payload, se necessario.
-    // Nesta versao nao ha camada adicional de enderecamento alem do framing.
-    (void)target_id;
+    return build_probe_frame(PROBE_UNINSTALL_REGISTER, target_id, 0x00,
+                             out_buf, out_buf_len);
 }
 
 // Valida delimitadores, tamanho, CRC e extrai registrador/ID/payload.
@@ -329,7 +323,7 @@ void send_probe_discovery(void)
 // Broadcast para sondas sem ID definitivo.
 {
     uint8_t tx_frame[PROBE_FRAME_TX_SIZE] = {0};
-    size_t tx_len = build_probe_frame(PROBE_INSTALL_REGISTER, PROBE_DISCOVERY_ID, 0x00,
+    size_t tx_len = build_probe_frame(PROBE_DISCOVERY_REGISTER, PROBE_DISCOVERY_ID, 0x00,
                                       tx_frame, sizeof(tx_frame));
     if (tx_len == 0) {
         return;
@@ -351,18 +345,16 @@ void send_probe_assignment(uint8_t id)
     uart_write_probe_bytes(tx_frame, tx_len);
 }
 
-// Envia frame de desinstalacao para o alvo corrente, gravando ID 0xFF.
+// Envia frame de desinstalacao enderecado ao alvo corrente.
 static void send_probe_uninstall(uint8_t target_id)
 // Envia reset para um alvo especifico, retornando-o ao estado virgem.
 {
     uint8_t tx_frame[PROBE_FRAME_TX_SIZE] = {0};
-    size_t tx_len = build_probe_uninstall_frame(tx_frame, sizeof(tx_frame));
+    size_t tx_len = build_probe_uninstall_frame(target_id, tx_frame, sizeof(tx_frame));
     if (tx_len == 0) {
         return;
     }
 
-    // Direciona transmissao para o alvo corrente (S1..S4) antes de gravar 0xFF.
-    select_probe_target_address(target_id);
     uart_write_probe_bytes(tx_frame, tx_len);
 }
 
@@ -577,7 +569,7 @@ void probe_install_manager_periodic(uint32_t now_ms)
         }
 
         if (has_valid_response) {
-            if (rx_reg != PROBE_INSTALL_REGISTER) {
+            if (rx_reg != PROBE_DISCOVERY_REGISTER || rx_id != PROBE_DISCOVERY_ID) {
                 return;
             }
             // Fase 2: recebeu resposta, entao atribui ID sequencial atual (1..4).

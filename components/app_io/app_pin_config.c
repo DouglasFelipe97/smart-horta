@@ -17,7 +17,7 @@ void app_configure_gpio_inputs(void){
 void app_configure_gpio_leds(void){
     /*Configurando leds de uso geral*/
     gpio_config_t leds_config = {
-        .pin_bit_mask = (1ULL << APP_LED_1_PIN) | (1ULL << APP_LED_2_PIN),
+        .pin_bit_mask = (1ULL << APP_LED_1_PIN) | (1ULL << APP_LED_2_PIN) | (1ULL << PROBE_UART_RE_DE_PIN), 
         .mode = GPIO_MODE_OUTPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,

@@ -21,6 +21,7 @@
 // LEDs
 #define APP_LED_1_PIN            GPIO_NUM_15
 #define APP_LED_2_PIN            GPIO_NUM_2
+#define PROBE_UART_RE_DE_PIN     GPIO_NUM_4
 
 // Buzzer
 #define APP_BUZZER_PIN           GPIO_NUM_13

@@ -244,7 +244,7 @@ static void draw_probe_rows(u8g2_t *u8g2, const app_state_snapshot_t *st)
                  a_u,
                  s_t,
                  s_u);
-        u8g2_DrawStr(u8g2, 2, 24 + (i * 12), line);
+        u8g2_DrawStr(u8g2, 2, 23 + (i * 11), line);
     }
 }
 
