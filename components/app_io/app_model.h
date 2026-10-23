@@ -14,6 +14,7 @@ typedef enum {
     APP_SCREEN_HOME = 0,
     // Tela de acesso rapido por tecla esquerda na HOME.
     APP_SCREEN_HOME_PROBES,
+    APP_SCREEN_HOME_PROBE_ALARMS,
     APP_SCREEN_MENU,
     APP_SCREEN_MENU_SETTINGS,
     APP_SCREEN_MENU_REPORTS,
@@ -133,6 +134,7 @@ typedef struct {
     uint8_t buzzer_index;                                       // Cursor do submenu Buzzer.
     uint8_t settings_probe_mode;                                // FSM/tela do gestor de sondas.
     uint8_t probe_menu_index;                                   // Cursor Instalar/Desinstalar/Sondas.
+    uint8_t home_alarm_offset;                                  // Deslocamento da lista de alarmes no atalho HOME.
     bool probe_install_running;                                 // Descoberta/atribuicao em progresso.
     bool probe_install_finished;                                // Instalacao terminou.
     uint8_t probe_install_completed_count;                      // IDs atribuidos (0..4).

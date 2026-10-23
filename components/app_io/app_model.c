@@ -35,6 +35,7 @@ typedef struct {
     uint8_t buzzer_index;
     uint8_t settings_probe_mode;
     uint8_t probe_menu_index;
+    uint8_t home_alarm_offset;
     bool probe_install_running;
     bool probe_install_finished;
     uint8_t probe_install_completed_count;
@@ -556,6 +557,7 @@ void app_model_get_snapshot(app_state_snapshot_t *snapshot)
     snapshot->buzzer_index = s_model.buzzer_index;
     snapshot->settings_probe_mode = s_model.settings_probe_mode;
     snapshot->probe_menu_index = s_model.probe_menu_index;
+    snapshot->home_alarm_offset = s_model.home_alarm_offset;
     snapshot->probe_install_running = s_model.probe_install_running;
     snapshot->probe_install_finished = s_model.probe_install_finished;
     snapshot->probe_install_completed_count = s_model.probe_install_completed_count;
@@ -614,6 +616,9 @@ void app_model_process_key(app_key_t key)
             } else if (key == APP_KEY_LEFT) {
                 // Atalho operacional: HOME -> lista resumida de sondas.
                 s_model.screen = APP_SCREEN_HOME_PROBES;
+            } else if (key == APP_KEY_DOWN) {
+                s_model.home_alarm_offset = 0;
+                s_model.screen = APP_SCREEN_HOME_PROBE_ALARMS;
             }
             break;
 
@@ -624,6 +629,23 @@ void app_model_process_key(app_key_t key)
             } else if (key == APP_KEY_MENU) {
                 s_model.screen = APP_SCREEN_MENU;
                 s_model.menu_index = 0;
+            }
+            break;
+
+        case APP_SCREEN_HOME_PROBE_ALARMS:
+            if (key == APP_KEY_BACK || key == APP_KEY_LEFT) {
+                s_model.screen = APP_SCREEN_HOME;
+            } else if (key == APP_KEY_MENU) {
+                s_model.screen = APP_SCREEN_MENU;
+                s_model.menu_index = 0;
+            } else if (key == APP_KEY_DOWN) {
+                s_model.home_alarm_offset++;
+            } else if (key == APP_KEY_UP) {
+                if (s_model.home_alarm_offset > 0U) {
+                    s_model.home_alarm_offset--;
+                } else {
+                    s_model.screen = APP_SCREEN_HOME_PROBES;
+                }
             }
             break;
 

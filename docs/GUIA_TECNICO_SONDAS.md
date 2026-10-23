@@ -34,7 +34,8 @@ Referencia de bancada, conferida com os firmwares em 2026-10-22:
    `0x20`: temperatura do ar, umidade do ar e umidade do solo, em decimos.
    A central continua aceitando ACK legado sem payload e o layout de 8 bytes.
 - O snapshot inicial da TTU e zero ate a primeira amostragem valida do SHT30.
-   A atualizacao continua ocorre na tela Sondas ou durante um lote ativo.
+   A central atualiza as leituras em background, exceto durante instalacao ou
+   desinstalacao, quando a UART e usada exclusivamente por esses fluxos.
    Solo ainda nao possui sensor implementado na TTU; umidade e placeholder e a
    central replica temperatura do ar quando nao recebe temperatura de solo.
 
@@ -344,10 +345,11 @@ em bancada o snapshot e o CRC podem variar.
 | 9. Nova descoberta | Central | `55 01 03 11 FF 00 08 71 55` |
 | 10. Resposta virgem | Sonda | `55 01 03 11 FF 00 08 71 55` |
 
-Na interface, a leitura ciclica fica ativa na tela Sondas ou com lote ativo,
-exceto durante instalacao/desinstalacao. A tela Instalar publica o snapshot do
-ACK e segue procurando as outras sondas; nao faz polling continuo das instaladas.
-Para capturar os passos 5 e 6 pelo menu, abrir Sondas apos instalar.
+Na interface, a leitura ciclica fica ativa em background, inclusive fora da
+tela Sondas e sem lote, exceto durante instalacao/desinstalacao. A tela Instalar
+publica o snapshot do ACK e segue procurando as outras sondas; o polling continuo
+comeca assim que a tela de instalacao e fechada. Para capturar os passos 5 e 6
+pelo menu, abrir Sondas apos instalar.
 
 ### 2.10 Tempos e direcao do barramento
 
@@ -621,13 +623,13 @@ stateDiagram-v2
    U_RUNNING --> U_IDLE: sair da tela antes de concluir
 ```
 
-### 11.3 FSM de Polling da Tela Sondas
+### 11.3 FSM de Polling em Background
 
 ```mermaid
 stateDiagram-v2
    [*] --> M_IDLE
 
-   M_IDLE --> M_SEND: entrar na tela Sondas
+   M_IDLE --> M_SEND: polling habilitado fora de Instalacao/Desinstalacao
    M_SEND --> M_WAIT_RESPONSE: envia leitura para ID atual
 
    M_WAIT_RESPONSE --> M_SEND: resposta valida do ID atual e ainda faltam IDs
@@ -638,9 +640,9 @@ stateDiagram-v2
 
    M_WAIT_NEXT_SCAN --> M_SEND: intervalo entre scans (1200ms)
 
-   M_SEND --> M_IDLE: sair da tela Sondas
-   M_WAIT_RESPONSE --> M_IDLE: sair da tela Sondas
-   M_WAIT_NEXT_SCAN --> M_IDLE: sair da tela Sondas
+   M_SEND --> M_IDLE: entrar em Instalacao/Desinstalacao
+   M_WAIT_RESPONSE --> M_IDLE: entrar em Instalacao/Desinstalacao
+   M_WAIT_NEXT_SCAN --> M_IDLE: entrar em Instalacao/Desinstalacao
 ```
 
 ### 11.4 Orquestracao no Loop da io_task
@@ -706,13 +708,13 @@ stateDiagram-v2
    U_RETURN_WAIT --> U_IDLE: active=false
 ```
 
-### 12.3 Polling Sondas (expandido com timeout/CRC)
+### 12.3 Polling em Background (expandido com timeout/CRC)
 
 ```mermaid
 stateDiagram-v2
    [*] --> M_IDLE
 
-   M_IDLE --> M_SEND: active=true (tela Sondas) / reset placeholders
+   M_IDLE --> M_SEND: active=true (fora de Instalacao/Desinstalacao) / reset placeholders
 
    M_SEND --> M_SEND: [now-stage_start < 30ms]
    M_SEND --> M_WAIT: [now-stage_start >= 30ms] / tx read(id atual)
@@ -779,18 +781,18 @@ sequenceDiagram
 | Auto-retorno ao submenu | `run_uninstall_sequence()` + `app_model_exit_probe_uninstall_to_menu()` | Volta para "Instalar Sondas" apos 500ms |
 | Sair da tela Desinstalar (`active=false`) | `probe_uninstall_manager_set_active()` | Interrompe/pauseia a rotina |
 
-### 13.3 Polling da tela Sondas
+### 13.3 Polling das sondas
 
 | Estado/Evento (FSM) | Funcao/Codigo | Acao executada |
 |---|---|---|
-| Entrar em Sondas (`active=true`) | `probe_monitor_manager_set_active()` | Inicia FSM de monitoramento e carrega placeholders |
+| Polling habilitado (`active=true`) | `probe_monitor_manager_set_active()` | Inicia FSM de monitoramento e carrega placeholders |
 | `M_SEND` | `probe_monitor_manager_periodic()` + `send_probe_read_request(id)` | Envia leitura para ID atual |
 | `M_WAIT_RESPONSE` (resposta valida) | `probe_monitor_manager_periodic()` + `process_probe_response()` | Valida `reg/id`, parseia payload e atualiza T/U/S |
 | Timeout de resposta | `probe_monitor_manager_periodic()` + `app_model_set_probe_snapshot()` | Marca sensor ausente (`__._` na UI) |
 | Fim da varredura (ID4) | `probe_monitor_manager_periodic()` | Entra em `M_WAIT_NEXT_SCAN` |
 | Gap entre varreduras | `probe_monitor_manager_periodic()` | Aguarda `PROBE_MONITOR_SCAN_PERIOD_MS` |
 | Reinicio da varredura | `probe_monitor_manager_periodic()` | Retorna ao ID=1 |
-| Sair da tela Sondas (`active=false`) | `probe_monitor_manager_set_active()` | Pausa polling e libera barramento |
+| Entrar em Instalar/Desinstalar (`active=false`) | `probe_monitor_manager_set_active()` | Pausa polling e libera barramento |
 
 ### 13.4 Framing, CRC e Parse
 
@@ -807,5 +809,5 @@ sequenceDiagram
 | Ponto de integracao | Funcao/Codigo | Papel |
 |---|---|---|
 | Tick periodico de 50ms | `io_task()` | Relogio base das FSMs |
-| Ativacao por tela | `app_model_is_probe_*_screen_active()` | Liga/desliga cada manager por contexto visual |
+| Exclusividade da UART | `app_model_is_probe_*_screen_active()` | Suspende polling durante instalacao/desinstalacao |
 | Execucao das rotinas | `probe_install_manager_periodic()` / `run_uninstall_sequence()` / `probe_monitor_manager_periodic()` | Mantem operacao assincrona e UI responsiva |

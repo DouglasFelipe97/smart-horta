@@ -75,21 +75,21 @@ void io_task(void *pvParameters){
         }
 
         // Orquestracao central das rotinas de sondas:
-        // 1) Cada manager e habilitado apenas quando sua tela esta ativa.
-        // 2) As rotinas sao chamadas em modo tick (nao bloqueante), mantendo
-        //    responsividade do teclado e refresh da UI.
-        // 3) Uma rotina inativa nao transmite nem consome barramento UART.
+        // 1) Instalacao/desinstalacao usam a UART exclusivamente.
+        // 2) O polling roda em background fora desses fluxos.
+        // 3) As FSMs sao chamadas em modo tick, mantendo a UI responsiva.
         //
         // Como o loop roda a cada ~50ms, este e o "relogio" base das FSMs.
         // Cada FSM aplica seus proprios timeouts internos (100ms, 500ms, 1200ms etc.).
         bool install_screen_active = app_model_is_probe_install_screen_active();
         bool uninstall_screen_active = app_model_is_probe_uninstall_screen_active();
+        bool probe_monitor_active = !install_screen_active && !uninstall_screen_active;
         bool monitor_active = app_model_is_probe_list_screen_active() ||
             (ambience_snapshot.lot_status == APP_LOT_STATUS_ACTIVE &&
              !install_screen_active && !uninstall_screen_active);
         probe_install_manager_set_active(install_screen_active);
         probe_uninstall_manager_set_active(uninstall_screen_active);
-        probe_monitor_manager_set_active(monitor_active);
+        probe_monitor_manager_set_active(probe_monitor_active);
         probe_install_manager_periodic(now_ms);
         run_uninstall_sequence(now_ms);
         probe_monitor_manager_periodic(now_ms);

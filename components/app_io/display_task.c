@@ -148,7 +148,107 @@ static const char *alarm_name(app_alarm_type_t type)
     }
 }
 
-// Mostra um evento por vez, partindo do mais recente para o mais antigo.
+typedef struct {
+    uint8_t probe_id;
+    const char *name;
+} home_alarm_entry_t;
+
+static uint8_t collect_home_alarms(const app_state_snapshot_t *st,
+                                   home_alarm_entry_t *alarms)
+{
+    uint8_t count = 0;
+
+    for (int i = 0; i < APP_PROBE_COUNT; i++) {
+        const app_probe_snapshot_t *probe = &st->probes[i];
+        if (!probe->installed || !probe->has_reading) {
+            continue;
+        }
+
+        for (uint8_t type = 0; type < APP_ALARM_FIXED_TYPE_COUNT; type++) {
+            bool is_active = false;
+            switch ((app_alarm_type_t)type) {
+                case APP_ALARM_AIR_TEMPERATURE_LOW:
+                    is_active = probe->air_temperature < APP_ALARM_AIR_TEMPERATURE_MIN_C;
+                    break;
+                case APP_ALARM_AIR_TEMPERATURE_HIGH:
+                    is_active = probe->air_temperature > APP_ALARM_AIR_TEMPERATURE_MAX_C;
+                    break;
+                case APP_ALARM_AIR_HUMIDITY_LOW:
+                    is_active = probe->air_humidity < APP_ALARM_AIR_HUMIDITY_MIN_PCT;
+                    break;
+                case APP_ALARM_AIR_HUMIDITY_HIGH:
+                    is_active = probe->air_humidity > APP_ALARM_AIR_HUMIDITY_MAX_PCT;
+                    break;
+                case APP_ALARM_SOIL_TEMPERATURE_LOW:
+                    is_active = probe->soil_temperature < APP_ALARM_SOIL_TEMPERATURE_MIN_C;
+                    break;
+                case APP_ALARM_SOIL_TEMPERATURE_HIGH:
+                    is_active = probe->soil_temperature > APP_ALARM_SOIL_TEMPERATURE_MAX_C;
+                    break;
+                case APP_ALARM_SOIL_HUMIDITY_LOW:
+                    is_active = probe->soil_humidity < APP_ALARM_SOIL_HUMIDITY_MIN_PCT;
+                    break;
+                case APP_ALARM_SOIL_HUMIDITY_HIGH:
+                    is_active = probe->soil_humidity > APP_ALARM_SOIL_HUMIDITY_MAX_PCT;
+                    break;
+                default:
+                    break;
+            }
+
+            if (is_active) {
+                alarms[count].probe_id = probe->probe_id;
+                alarms[count].name = alarm_name((app_alarm_type_t)type);
+                count++;
+            }
+        }
+    }
+
+    if (st->ambience_alarm_active) {
+        alarms[count].probe_id = 0;
+        alarms[count].name = "Ambiencia fora da meta";
+        count++;
+    }
+    return count;
+}
+
+static void draw_home_probe_alarms(u8g2_t *u8g2, const app_state_snapshot_t *st)
+{
+    home_alarm_entry_t alarms[APP_PROBE_COUNT * APP_ALARM_FIXED_TYPE_COUNT + 1U];
+    uint8_t alarm_count = collect_home_alarms(st, alarms);
+
+    u8g2_SetFont(u8g2, u8g2_font_4x6_tr);
+    u8g2_DrawStr(u8g2, 2, 6, "ALARMES ATIVOS");
+    if (alarm_count == 0U) {
+        u8g2_SetFont(u8g2, u8g2_font_5x7_tr);
+        u8g2_DrawStr(u8g2, 2, 34, "Sem alarmes");
+        u8g2_SetFont(u8g2, u8g2_font_4x6_tr);
+        u8g2_DrawStr(u8g2, 2, 63, "CIMA: sondas  ESQ: inicio");
+        return;
+    }
+
+    uint8_t first = (uint8_t)(st->home_alarm_offset % alarm_count);
+    uint8_t visible = alarm_count < 5U ? alarm_count : 5U;
+    char line[32];
+    u8g2_SetFont(u8g2, u8g2_font_5x7_tr);
+    for (uint8_t row = 0; row < visible; row++) {
+        const home_alarm_entry_t *alarm = &alarms[(first + row) % alarm_count];
+        if (alarm->probe_id == 0U) {
+            snprintf(line, sizeof(line), "%s", alarm->name);
+        } else {
+            snprintf(line, sizeof(line), "%s S%u", alarm->name, (unsigned)alarm->probe_id);
+        }
+        u8g2_DrawStr(u8g2, 2, 16 + (row * 9), line);
+    }
+
+    u8g2_SetFont(u8g2, u8g2_font_4x6_tr);
+    if (alarm_count > 5U) {
+        u8g2_DrawStr(u8g2, 2, 63, "BAIXO: mais  CIMA: voltar");
+    } else {
+        u8g2_DrawStr(u8g2, 2, 63, "CIMA: sondas  ESQ: inicio");
+    }
+}
+
+// Mostra um evento persistido por vez no menu de relatorios.
 static void draw_reports(u8g2_t *u8g2, const app_state_snapshot_t *st)
 {
     char line[32];
@@ -183,15 +283,15 @@ static void draw_reports(u8g2_t *u8g2, const app_state_snapshot_t *st)
     u8g2_DrawStr(u8g2, 2, 57, line);
 }
 
-// Formata leitura ou placeholder respeitando o espaco reduzido de cada linha.
+// Formata leituras com uma casa decimal e largura fixa para a tela de sondas.
 static void format_probe_value(char *out, size_t out_len, bool has_value, float value)
 {
     if (!has_value) {
-        snprintf(out, out_len, "--");
+        snprintf(out, out_len, " --.-");
         return;
     }
 
-    snprintf(out, out_len, "%2.0f", value);
+    snprintf(out, out_len, "%5.1f", value);
 }
 
 // Barra ciclica animada enquanto a FSM de descoberta esta executando.
@@ -218,17 +318,16 @@ static void draw_install_progress_indicator(u8g2_t *u8g2)
     phase = (uint8_t)((phase + 1U) % segments);
 }
 
-// Desenha quatro slots com leituras de ar/solo ou placeholders sem leitura.
+// Desenha quatro slots em duas linhas cada para manter uma casa decimal.
 static void draw_probe_rows(u8g2_t *u8g2, const app_state_snapshot_t *st)
 {
     char line[32];
-    char a_t[4];
-    char a_u[4];
-    char s_t[4];
-    char s_u[4];
+    char a_t[6];
+    char a_u[6];
+    char s_t[6];
+    char s_u[6];
 
-    // Abreviacoes para caber com fonte padrao: A/U (ar), T/S (solo).
-    // Exemplo: S1 A23 U55 T21 S40.
+    u8g2_SetFont(u8g2, u8g2_font_5x7_tr);
     for (int i = 0; i < APP_PROBE_COUNT; i++) {
         bool has_data = st->probes[i].installed && st->probes[i].has_reading;
         format_probe_value(a_t, sizeof(a_t), has_data, st->probes[i].air_temperature);
@@ -236,15 +335,14 @@ static void draw_probe_rows(u8g2_t *u8g2, const app_state_snapshot_t *st)
         format_probe_value(s_t, sizeof(s_t), has_data, st->probes[i].soil_temperature);
         format_probe_value(s_u, sizeof(s_u), has_data, st->probes[i].soil_humidity);
 
-        snprintf(line,
-                 sizeof(line),
-                 "S%u A%s U%s T%s S%s",
+        snprintf(line, sizeof(line), "S%u A:%s U:%s",
                  (unsigned)st->probes[i].probe_id,
                  a_t,
-                 a_u,
-                 s_t,
-                 s_u);
-        u8g2_DrawStr(u8g2, 2, 23 + (i * 11), line);
+                 a_u);
+        u8g2_DrawStr(u8g2, 2, 8 + (i * 15), line);
+
+        snprintf(line, sizeof(line), "    T:%s S:%s", s_t, s_u);
+        u8g2_DrawStr(u8g2, 2, 16 + (i * 15), line);
     }
 }
 
@@ -495,10 +593,10 @@ static void draw_screen(u8g2_t *u8g2, const app_state_snapshot_t *st)
             break;
         case APP_SCREEN_HOME_PROBES:
             // Tela espelho de sondas acessada pela tecla esquerda na HOME.
-            u8g2_SetFont(u8g2, u8g2_font_6x12_tr);
-            u8g2_DrawStr(u8g2, 2, 10, "SONDAS INSTALADAS");
-            u8g2_DrawHLine(u8g2, 0, 12, 128);
             draw_probe_rows(u8g2, st);
+            break;
+        case APP_SCREEN_HOME_PROBE_ALARMS:
+            draw_home_probe_alarms(u8g2, st);
             break;
         case APP_SCREEN_MENU:
             draw_main_menu(u8g2, st);

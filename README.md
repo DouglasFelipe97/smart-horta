@@ -170,9 +170,10 @@ estas condicoes forem verdadeiras:
 - Ambiencia foi editada e confirmada; o indicador da tela mostra ON.
 - O monitor de sondas esta ativo e ha leituras validas de sondas instaladas.
 
-O monitoramento continua em background durante lote ativo. E pausado durante
-instalacao/desinstalacao porque esses fluxos tambem usam a UART RS-485; nesse
-intervalo o controlador limpa alarme e desliga saídas.
+O polling atualiza as sondas em background continuamente, exceto durante
+instalacao/desinstalacao, que tambem usam a UART RS-485. O controle ambiental
+continua restrito as condicoes acima; apenas a coleta de leituras fica ativa
+fora da tela Sondas.
 
 Qualquer sonda instalada com leitura valida pode disparar uma condicao. Os limites
 sao inclusivos e relativos a meta interpolada:

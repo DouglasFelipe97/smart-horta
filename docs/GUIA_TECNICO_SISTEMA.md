@@ -287,9 +287,10 @@ forem verdadeiras:
 2. Ambiencia esta configurada/confirmada (`ambience_configured == true`).
 3. O monitor de sondas esta ativo e ha respostas validas de sondas instaladas.
 
-Durante lote ativo, `io_task` habilita o polling em background. O polling e
-desabilitado nas telas de instalacao/desinstalacao para evitar concorrencia na
-UART half-duplex. Fora das condicoes de controle, o controlador limpa alarmes
+`io_task` habilita o polling em background continuamente, inclusive fora de um
+lote, para manter as leituras atualizadas. O polling e desabilitado nas telas de
+instalacao/desinstalacao para evitar concorrencia na UART half-duplex. Isso nao
+habilita o controle: fora das condicoes acima, o controlador limpa alarmes
 dinamicos e solicita desligamento das saidas.
 
 ### Algoritmo dinamico por meta
@@ -448,8 +449,8 @@ passos, mostra conclusao por 500 ms e retorna ao submenu de sondas.
 
 ### Polling e monitoramento
 
-O manager de monitoramento e ativado na tela Sondas ou em background durante
-lote ativo, exceto durante instalacao/desinstalacao. Consulta IDs 1..4 em ordem:
+O manager de monitoramento fica ativo em background, exceto durante
+instalacao/desinstalacao. Consulta IDs 1..4 em ordem:
 
 1. Aguarda 30 ms entre envios, envia leitura `0x20` e espera resposta.
 2. Resposta com registrador/ID correspondentes e payload decodificavel atualiza
